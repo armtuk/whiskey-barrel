@@ -2,12 +2,12 @@
 
 node_modules
 dist
+coverage
 
-.claude
-claude-sessions
-.agents/*.md
-.agents/frameworks
-.agents/languages
-.agents/guidance
-.agents/autopilot
-.agents/project-tooling
+# AI config — never committed
+CLAUDE.md
+AGENTS.md
+.claude/
+.agents/
+claude-sessions/
+feature-planning.session.id
