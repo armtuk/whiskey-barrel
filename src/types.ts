@@ -10,7 +10,7 @@ export const evolutionValidator = z
     id: z.number().int().positive(),
     up: z.string(),
     down: z.string(),
-    hash: z.string(),
+    hash: z.string()
   })
   .strict()
 export type Evolution = z.infer<typeof evolutionValidator>
@@ -23,7 +23,7 @@ export const evolutionRecordValidator = z
     apply_script: z.string(),
     revert_script: z.string(),
     state: evolutionStateValidator,
-    last_problem: z.string().nullable(),
+    last_problem: z.string().nullable()
   })
   .strict()
 export type EvolutionRecord = z.infer<typeof evolutionRecordValidator>
@@ -39,7 +39,7 @@ export const migratorOptionsValidator = z
       .string()
       .regex(/^[a-zA-Z_][a-zA-Z0-9_]*$/, "tableName must be a valid SQL identifier")
       .default("db_evolutions"),
-    autoApply: z.boolean().default(false),
+    autoApply: z.boolean().default(false)
   })
   .strict()
 export type MigratorOptions = z.infer<typeof migratorOptionsValidator>
