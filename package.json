@@ -1,0 +1,117 @@
+{
+  "name": "whiskey-barrel",
+  "version": "0.1.0",
+  "description": "Play Framework-style database evolutions for Node.js",
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      },
+      "require": {
+        "types": "./dist/index.d.cts",
+        "default": "./dist/index.cjs"
+      }
+    },
+    "./drivers/pg": {
+      "import": {
+        "types": "./dist/drivers/pg.driver.d.ts",
+        "default": "./dist/drivers/pg.driver.js"
+      },
+      "require": {
+        "types": "./dist/drivers/pg.driver.d.cts",
+        "default": "./dist/drivers/pg.driver.cjs"
+      }
+    },
+    "./drivers/postgres-js": {
+      "import": {
+        "types": "./dist/drivers/postgres-js.driver.d.ts",
+        "default": "./dist/drivers/postgres-js.driver.js"
+      },
+      "require": {
+        "types": "./dist/drivers/postgres-js.driver.d.cts",
+        "default": "./dist/drivers/postgres-js.driver.cjs"
+      }
+    },
+    "./drivers/better-sqlite3": {
+      "import": {
+        "types": "./dist/drivers/better-sqlite3.driver.d.ts",
+        "default": "./dist/drivers/better-sqlite3.driver.js"
+      },
+      "require": {
+        "types": "./dist/drivers/better-sqlite3.driver.d.cts",
+        "default": "./dist/drivers/better-sqlite3.driver.cjs"
+      }
+    },
+    "./drivers/node-sqlite": {
+      "import": {
+        "types": "./dist/drivers/node-sqlite.driver.d.ts",
+        "default": "./dist/drivers/node-sqlite.driver.js"
+      },
+      "require": {
+        "types": "./dist/drivers/node-sqlite.driver.d.cts",
+        "default": "./dist/drivers/node-sqlite.driver.cjs"
+      }
+    }
+  },
+  "bin": {
+    "db-evolutions": "./dist/bin/db-evolutions.js"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "pnpm typecheck && pnpm build"
+  },
+  "dependencies": {
+    "zod": "^3.23.0",
+    "jiti": "^2.0.0"
+  },
+  "peerDependencies": {
+    "pg": ">=8.0.0",
+    "postgres": ">=3.0.0",
+    "better-sqlite3": ">=9.0.0"
+  },
+  "peerDependenciesMeta": {
+    "pg": {
+      "optional": true
+    },
+    "postgres": {
+      "optional": true
+    },
+    "better-sqlite3": {
+      "optional": true
+    }
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "better-sqlite3",
+      "esbuild"
+    ]
+  },
+  "devDependencies": {
+    "typescript": "^5.5.0",
+    "tsup": "^8.0.0",
+    "vitest": "^2.0.0",
+    "@vitest/coverage-v8": "^2.0.0",
+    "pg": "^8.0.0",
+    "@types/pg": "^8.0.0",
+    "better-sqlite3": "^12.0.0",
+    "@types/better-sqlite3": "^7.6.0",
+    "@types/node": "^22.0.0"
+  }
+}
