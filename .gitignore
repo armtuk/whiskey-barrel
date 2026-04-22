@@ -1,0 +1,13 @@
+.idea
+
+node_modules
+dist
+
+.claude
+claude-sessions
+.agents/*.md
+.agents/frameworks
+.agents/languages
+.agents/guidance
+.agents/autopilot
+.agents/project-tooling
