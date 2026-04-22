@@ -26,6 +26,9 @@
         "noExplicitAny": "error",
         "noConsole": "error"
       },
+      "performance": {
+        "noAwaitInLoops": "error"
+      },
       "style": {
         "noParameterAssign": "error",
         "useTemplate": "error"
