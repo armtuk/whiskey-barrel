@@ -19,7 +19,7 @@ export const evolutionRecordValidator = z
   .object({
     id: z.number().int().positive(),
     hash: z.string(),
-    applied_at: z.date(),
+    applied_at: z.coerce.date(),
     apply_script: z.string(),
     revert_script: z.string(),
     state: evolutionStateValidator,
