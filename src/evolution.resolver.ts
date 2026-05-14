@@ -1,3 +1,4 @@
+import { Effect } from "effect"
 import { existsSync, readdirSync } from "node:fs"
 import { join } from "node:path"
 
@@ -15,14 +16,15 @@ export interface EvolutionFileRef {
  * If `dbType` is provided, checks `{evolutionsRoot}/{dbName}.{dbType}/` first,
  * falling back to `{evolutionsRoot}/{dbName}/`.
  */
-export const resolveEvolutionFiles = (evolutionsRoot: string, dbName: string, dbType?: string): EvolutionFileRef[] => {
+export const resolveEvolutionFiles = (evolutionsRoot: string, dbName: string, dbType?: string): Effect.Effect<EvolutionFileRef[], never, never> => {
   const dir = resolveDirectory(evolutionsRoot, dbName, dbType)
-  if (!existsSync(dir)) return []
+  if (!existsSync(dir)) return Effect.succeed([])
 
-  return readdirSync(dir)
+  return Effect.succeed(readdirSync(dir)
     .filter(f => /^\d+\.sql$/i.test(f))
     .map(f => ({ id: parseInt(f, 10), filePath: join(dir, f) }))
     .sort((a, b) => a.id - b.id)
+  )
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────────

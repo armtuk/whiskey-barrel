@@ -1,19 +1,32 @@
 import { z } from "zod"
+import { Stream, Data, Effect } from "effect"
+import { only } from "node:test"
 
 // ── Domain Models ──────────────────────────────────────────────────────────────
 
-export const evolutionStateValidator = z.enum(["applying_up", "applied", "applying_down"])
-export type EvolutionState = z.infer<typeof evolutionStateValidator>
+export const evolutionStates: Array<string> = ["applying_up", "applied", "applying_down"] as const
+type EvolutionState = typeof evolutionStates[number]
 
-export const evolutionValidator = z
-  .object({
-    id: z.number().int().positive(),
-    up: z.string(),
-    down: z.string(),
-    hash: z.string()
-  })
+export const evolutionState: Record<string, EvolutionState> = {
+  applyingDown: "applying_down",
+  applied: "applied",
+  applyingUp: "applying_up",
+} as const
+export const evolutionStateValidator = z.enum(evolutionStates)
+
+export const evolutionValidator = z.object({
+  up: z.string(),
+  down: z.string(),
+  hash: z.string()
+})
   .strict()
 export type Evolution = z.infer<typeof evolutionValidator>
+
+export type EvolutionLazy = {
+  up: Stream.Stream<string>
+  down: Stream.Stream<string>
+  hash: (stream: Stream.Stream<string>) => Effect.Effect<string>
+}
 
 export const evolutionRecordValidator = z
   .object({
@@ -30,10 +43,47 @@ export type EvolutionRecord = z.infer<typeof evolutionRecordValidator>
 
 // ── Configuration ──────────────────────────────────────────────────────────────
 
+export const dbTypes = ["postgresql", "sqlite"] as const
+
+export const dbType: Record<typeof dbTypes[number], typeof dbTypes[number]> = {
+  postgresql: "postgresql",
+  sqlite: "sqlite"
+} as const
+
+export type DbType = typeof dbTypes[number]
+
+// ── Connection Config ─────────────────────────────────────────────────────────
+
+export const postgresqlConnectionConfigValidator = z.object({
+  type: z.literal("postgresql"),
+  host: z.string(),
+  port: z.number().int().positive().default(5432),
+  database: z.string(),
+  user: z.string().optional(),
+  password: z.string().optional(),
+  connectionString: z.string().optional(),
+  ssl: z.boolean().optional()
+}).strict()
+
+export const sqliteConnectionConfigValidator = z.object({
+  type: z.literal("sqlite"),
+  path: z.string()
+}).strict()
+
+export const connectionConfigValidator = z.discriminatedUnion("type", [
+  postgresqlConnectionConfigValidator,
+  sqliteConnectionConfigValidator
+])
+
+export type PostgresqlConnectionConfig = z.infer<typeof postgresqlConnectionConfigValidator>
+export type SqliteConnectionConfig = z.infer<typeof sqliteConnectionConfigValidator>
+export type ConnectionConfig = z.infer<typeof connectionConfigValidator>
+
+
 export const migratorOptionsValidator = z
   .object({
     dbName: z.string(),
-    dbType: z.string().optional(),
+    dbType: z.enum(dbTypes),
     evolutionsRoot: z.string().default("conf/evolutions"),
     tableName: z
       .string()
@@ -42,7 +92,9 @@ export const migratorOptionsValidator = z
     autoApply: z.boolean().default(false)
   })
   .strict()
+
 export type MigratorOptions = z.infer<typeof migratorOptionsValidator>
+
 export type MigratorOptionsInput = z.input<typeof migratorOptionsValidator>
 
 export const defineConfig = (config: MigratorOptionsInput): MigratorOptionsInput => config
@@ -50,38 +102,40 @@ export const defineConfig = (config: MigratorOptionsInput): MigratorOptionsInput
 // ── Result Types ───────────────────────────────────────────────────────────────
 
 export interface StatusSuccessResult {
-  status: "success"
-  applied: EvolutionRecord[]
-  pending: Evolution[]
-  conflicts: Array<{ id: number; fileHash: string; dbHash: string }>
-  stuck: EvolutionRecord[]
+  _tag: "success"
 }
+
+export interface StatusStuckResult {
+  _tag: "stuck"
+  evolutionRecord: EvolutionRecord
+  message: string
+}
+
 export interface StatusFailureResult {
-  status: "failure"
-  error: string
+  _tag: "failure"
+  error?: string
 }
-export type StatusResult = StatusSuccessResult | StatusFailureResult
+export type StatusResult = StatusSuccessResult | StatusStuckResult | StatusFailureResult
 
 export interface ApplySuccessResult {
-  status: "success"
-  applied: number[]
-  rolledBack: number[]
+  _tag: "ApplySuccessResult"
 }
-export interface ApplyConflictResult {
-  status: "conflict"
-  changedAt: number
-  details: string
-}
+
 export interface ApplyFailureResult {
-  status: "failure"
+  _tag: "ApplyFailureResult"
   error: string
-  stuckAt?: number
+  evolutionRecord?: EvolutionRecord
 }
-export type ApplyResult = ApplySuccessResult | ApplyConflictResult | ApplyFailureResult
+
+export type ApplyResult = ApplySuccessResult | ApplyFailureResult
+
+export const applyResult = {
+  success: () => { _tag: "ApplySuccessResult" },
+  failure: (error: string, evolutionRecord?: EvolutionRecord) => ({ _tag: "ApplyFailureResult", error, evolutionRecord })
+}
 
 export interface RollbackSuccessResult {
   status: "success"
-  rolledBack: number[]
 }
 export interface RollbackFailureResult {
   status: "failure"
@@ -98,6 +152,10 @@ export interface ResolveFailureResult {
   error: string
 }
 export type ResolveResult = ResolveSuccessResult | ResolveFailureResult
+export const resolveResult = {
+  failure: (error: string) => ({ status: "failure", error }),
+  success: (id: number) => ({ status: "success", id })
+}
 
 // ── Errors (unexpected failures only) ─────────────────────────────────────────
 
@@ -107,3 +165,11 @@ export class InconsistentDatabaseError extends Error {
     this.name = "InconsistentDatabaseError"
   }
 }
+
+export class InitializationError extends Data.TaggedError("InitializationError")<{}> { }
+
+export class NotFoundError extends Data.TaggedError("NotFoundError")<{}> {
+  constructor(public content: unknown) {
+    super()
+  }
+} 

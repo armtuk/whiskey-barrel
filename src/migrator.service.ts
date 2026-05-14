@@ -2,15 +2,28 @@ import type { MigrationDriver } from "./drivers/driver.types.js"
 import { EvolutionFileService } from "./evolution.file.service.js"
 import {
   type ApplyResult,
+  applyResult,
+  DbType,
   type Evolution,
   type EvolutionRecord,
   evolutionRecordValidator,
+  evolutionState,
   InconsistentDatabaseError,
+  InitializationError,
   type MigratorOptions,
   type ResolveResult,
+  resolveResult,
   type RollbackResult,
-  type StatusResult
+  type StatusResult,
+  StatusStuckResult,
+  StatusSuccessResult
 } from "./types.js"
+import { Context, Effect, Layer, Option, Stream, pipe } from "effect"
+import { SqlRunner } from "./util/sql-runner.ts"
+import { zodParseEffect } from "./util/zodEffectUtil.ts"
+import { EvolutionRepository } from "./evolution.repository.ts"
+import { UnknownException } from "effect/Cause"
+import { ZodError } from "zod"
 
 // ── Init SQL (inlined to avoid runtime file-loading complexity in dual ESM/CJS) ─
 
@@ -36,171 +49,135 @@ CREATE TABLE IF NOT EXISTS db_evolutions (
   last_problem   TEXT
 )`
 
+const inits: Record<DbType, string> = {
+  sqlite: INIT_SQLITE,
+  postgresql: INIT_POSTGRESQL
+} as const
+
+
+// Service Tag
+export class MigratorService extends Context.Tag("MigratorService")<MigratorService, {
+  apply: () => Effect.Effect<ApplyResult>
+}>() { }
+
+
 // ── Service ────────────────────────────────────────────────────────────────────
+export const MigratorServiceLive = (options: MigratorOptions) => Layer.effect(
+  MigratorService,
+  Effect.gen(function* () {
+    const fileService = yield* EvolutionFileService
+    const sqlRunner = yield* SqlRunner
+    const repo = yield* EvolutionRepository
 
-export class MigratorService {
-  private readonly fileService: EvolutionFileService
-  private readonly table: string
+    const initialize = () => Effect.gen(function* () {
+      const template = inits[options.dbType]
 
-  constructor(
-    private readonly driver: MigrationDriver,
-    private readonly options: MigratorOptions
-  ) {
-    this.fileService = new EvolutionFileService(options)
-    this.table = options.tableName
-  }
+      const sql = template.replace(/db_evolutions/g, options.tableName)
 
-  async apply(): Promise<ApplyResult> {
-    // GATHER
-    await this.initialize()
-    const files = this.fileService.fetchEvolutions()
-    const records = await this.fetchAllRecords()
+      yield* sqlRunner.exec(sql)
+    })
 
-    // COMPUTE
-    const stuck = findStuck(records)
-    if (stuck.length > 0) throw new InconsistentDatabaseError(stuck)
-
-    const changeId = findFirstDivergence(files, records)
-    if (changeId !== null && !this.options.autoApply) {
-      return { status: "conflict", changedAt: changeId, details: `Evolution ${changeId} hash has changed` }
+    const status = (): Effect.Effect<StatusResult, UnknownException, never> => {
+      return pipe(
+        sqlRunner.query<EvolutionRecord>(`select * from ${options.tableName} where state in (?, ?) order by id asc limit 1`, [evolutionState.applyingUp, evolutionState.applyingDown]),
+        Effect.map(rows => {
+          if (rows.length == 0) {
+            return { _tag: "success" } as StatusSuccessResult
+          }
+          else {
+            return { _tag: "stuck", message: rows[0].last_problem || `Unknown Problem Occurred applying evolution ID ${rows[0].id}`, evolutionRecord: rows[0] } as StatusStuckResult
+          }
+        })
+      )
     }
 
-    const plan = buildPlan(files, records, changeId)
-    if (plan.downs.length === 0 && plan.ups.length === 0) {
-      return { status: "success", applied: [], rolledBack: [] }
+    const fetchAllRecords = (): Effect.Effect<EvolutionRecord[], UnknownException | ZodError, never> =>
+      sqlRunner.queryStream(`SELECT * FROM ${options.tableName} ORDER BY id`).pipe(
+        Stream.mapEffect(zodParseEffect(evolutionRecordValidator)),
+        Stream.runCollect,
+        Effect.map(chunk => Array.from(chunk))
+      )
+
+    const apply = (): Effect.Effect<ApplyResult> => Effect.gen(function* () {
+      yield* initialize()
+
+      // TODO see if we can decompose this
+      const x = yield* status()
+      if (x._tag === "stuck") {
+        return yield* Effect.fail(applyResult.failure(
+          x.message,
+          x.evolutionRecord
+        ))
+      }
+      if (x._tag === "failure") {
+        return yield* Effect.fail(applyResult.failure(
+          x.error || "Unknown error applying evolutions"
+        ))
+      }
+
+      const files = yield* fileService.fetchEvolutions()
+      const records = yield* fetchAllRecords()
+
+      const diverged = findFirstDivergence(files, records).flatMap(v => v)
+      if (diverged[0] !== null && !options.autoApply) {
+        return { status: "conflict", changedAt: changeId, details: `Evolution ${changeId} hash has changed` }
+      }
+
+      const plan = buildPlan(files, records, changeId)
+      if (plan.downs.length === 0 && plan.ups.length === 0) {
+        return { status: "success", applied: [], rolledBack: [] }
+      }
+
+      return executePlan(plan)
+    })
+
+    const findFirstDivergence = (files: Evolution[], records: EvolutionRecord[]): Option.Option<[Evolution | undefined, EvolutionRecord | undefined]> => {
+      const paired = Array.from(files, (val, i) => [val, records[i]])
+      return Option.fromNullable(paired.find(([a, b]) => a?.hash !== b?.hash))
     }
 
-    // PERSIST
-    return this.executePlan(plan)
-  }
+    const rollback = () => Effect.gen(function* () {
+      yield* initialize()
 
-  async status(): Promise<StatusResult> {
-    // GATHER — read-only, never mutates db_evolutions
-    await this.initialize()
-    const files = this.fileService.fetchEvolutions()
-    const records = await this.fetchAllRecords()
+      yield* pipe(
+        fetchAllRecords(),
+        Effect.map(x => x.slice(-1)[0]),
+        Effect.tap(revert => sqlRunner.exec(`UPDATE ${options.tableName} SET state = 'applying_down' WHERE id = ?`, [revert.id])),
+        Effect.flatMap(revert => {
+          return pipe(revert,
+            sqlRunner.exec(revert.revert_script)
+          )
+        })
+        Effect.tap(revert => sqlRunner.query(`DELETE FROM ${options.tableName} WHERE id = ?`, [last.id])),
+      )
 
-    // COMPUTE
-    const stuck = findStuck(records)
-    const recordMap = new Map(records.map(r => [r.id, r]))
-    const appliedIds = new Set(records.filter(r => r.state === "applied").map(r => r.id))
-
-    const conflicts = files.reduce<Array<{ id: number; fileHash: string; dbHash: string }>>((acc, f) => {
-      const r = recordMap.get(f.id)
-      if (r && r.hash !== f.hash) acc.push({ id: f.id, fileHash: f.hash, dbHash: r.hash })
-      return acc
-    }, [])
-
-    const pending = files.filter(f => !recordMap.has(f.id))
-    const applied = records.filter(r => appliedIds.has(r.id))
-
-    return { status: "success", applied, pending, conflicts, stuck }
-  }
-
-  async rollback(): Promise<RollbackResult> {
-    // GATHER
-    await this.initialize()
-    const records = await this.fetchAllRecords()
-
-    // COMPUTE
-    const stuck = findStuck(records)
-    if (stuck.length > 0) throw new InconsistentDatabaseError(stuck)
-
-    const last = records.filter(r => r.state === "applied").at(-1)
-    if (!last) return { status: "success", rolledBack: [] }
-
-    // PERSIST
-    try {
-      await this.driver.query(`UPDATE ${this.table} SET state = 'applying_down' WHERE id = ?`, [last.id])
-      await this.driver.exec(last.revert_script)
-      await this.driver.query(`DELETE FROM ${this.table} WHERE id = ?`, [last.id])
       return { status: "success", rolledBack: [last.id] }
-    } catch (err) {
-      return { status: "failure", error: err instanceof Error ? err.message : String(err) }
-    }
-  }
+    })
 
-  async resolve(id: number): Promise<ResolveResult> {
-    const records = await this.fetchAllRecords()
-    const record = records.find(r => r.id === id)
+    const resolve = (id: number): Effect.Effect<ResolveResult, never, SqlRunner> => Effect.gen(function* () {
+      const sql = yield* SqlRunner
 
-    if (!record) return { status: "failure", error: `Evolution ${id} not found` }
+      const r: EvolutionRecord[] = yield* sql.query<EvolutionRecord>(`select * from ${self.table} where id = :id`, { id })
 
-    if (record.state === "applying_up") {
-      await this.driver.query(`UPDATE ${this.table} SET state = 'applied', last_problem = NULL WHERE id = ?`, [id])
-      return { status: "success", id }
-    } else if (record.state === "applying_down") {
-      await this.driver.query(`DELETE FROM ${this.table} WHERE id = ?`, [id])
-      return { status: "success", id }
-    } else {
-      return { status: "failure", error: `Evolution ${id} is not stuck (state: ${record.state})` }
-    }
-  }
+      if (!r) return resolveResult.failure(`Evolution ${id} not found`)
 
-  // ── Private ────────────────────────────────────────────────────────────────
-
-  private async initialize(): Promise<void> {
-    const template = this.options.dbType === "postgresql" ? INIT_POSTGRESQL : INIT_SQLITE
-    const sql = template.replace(/db_evolutions/g, this.table)
-    await this.driver.exec(sql)
-  }
-
-  private async fetchAllRecords(): Promise<EvolutionRecord[]> {
-    const rows = await this.driver.query<Record<string, unknown>>(
-      `SELECT id, hash, applied_at, apply_script, revert_script, state, last_problem FROM ${this.table} ORDER BY id`
-    )
-    return rows.map(row => evolutionRecordValidator.parse(row))
-  }
-
-  private async executePlan(plan: MigrationPlan): Promise<ApplyResult> {
-    const rolledBack: number[] = []
-    const applied: number[] = []
-
-    try {
-      for (const record of plan.downs) {
-        // biome-ignore lint/performance/noAwaitInLoops: rollbacks must execute sequentially high → low
-        await this.driver.query(`UPDATE ${this.table} SET state = 'applying_down' WHERE id = ?`, [record.id])
-        await this.driver.exec(record.revert_script)
-        await this.driver.query(`DELETE FROM ${this.table} WHERE id = ?`, [record.id])
-        rolledBack.push(record.id)
+      if (r.state === "applying_up") {
+        await this.driver.query(`UPDATE ${this.table} SET state = 'applied', last_problem = NULL WHERE id = ?`, [id])
+        return { status: "success", id }
+      } else if (record.state === "applying_down") {
+        await this.driver.query(`DELETE FROM ${this.table} WHERE id = ?`, [id])
+        return { status: "success", id }
+      } else {
+        return { status: "failure", error: `Evolution ${id} is not stuck (state: ${record.state})` }
       }
+    })
 
-      for (const file of plan.ups) {
-        // biome-ignore lint/performance/noAwaitInLoops: migrations must execute sequentially low → high
-        await this.driver.query(
-          `INSERT INTO ${this.table} (id, hash, applied_at, apply_script, revert_script, state, last_problem) VALUES (?, ?, CURRENT_TIMESTAMP, ?, ?, 'applying_up', NULL)`,
-          [file.id, file.hash, file.up, file.down]
-        )
-        await this.driver.exec(file.up)
-        await this.driver.query(`UPDATE ${this.table} SET state = 'applied' WHERE id = ?`, [file.id])
-        applied.push(file.id)
-      }
-    } catch (err) {
-      return { status: "failure", error: err instanceof Error ? err.message : String(err) }
+    const executePlan = (plan: MigrationPlan): EvolutionRecord[] => {
+      records.filter(r => r.state === "applying_up" || r.state === "applying_down")
     }
 
-    return { status: "success", applied, rolledBack }
-  }
-}
-
-// ── Pure helpers (Compute phase — no IO) ──────────────────────────────────────
-
-interface MigrationPlan {
-  downs: EvolutionRecord[] // sorted high → low
-  ups: Evolution[] // sorted low → high
-}
-
-const findStuck = (records: EvolutionRecord[]): EvolutionRecord[] =>
-  records.filter(r => r.state === "applying_up" || r.state === "applying_down")
-
-const findFirstDivergence = (files: Evolution[], records: EvolutionRecord[]): number | null => {
-  const recordMap = new Map(records.map(r => [r.id, r]))
-  for (const file of files) {
-    const record = recordMap.get(file.id)
-    if (record && record.hash !== file.hash) return file.id
-  }
-  return null
-}
+    return { apply }
+  })
 
 const buildPlan = (files: Evolution[], records: EvolutionRecord[], changeId: number | null): MigrationPlan => {
   if (changeId === null) {

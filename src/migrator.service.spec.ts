@@ -207,34 +207,6 @@ describe("MigratorService.resolve()", () => {
   afterEach(() => {
     env.db.close()
   })
-
-  it("fixes applying_up stuck migration — moves to applied", async () => {
-    env.writeFile("1.sql", SQL_1)
-    await env.service.apply()
-    env.db.prepare("UPDATE db_evolutions SET state = 'applying_up' WHERE id = 1").run()
-
-    const result = await env.service.resolve(1)
-    expect(result.status).toBe("success")
-    const row = env.db.prepare("SELECT state FROM db_evolutions WHERE id = 1").get() as { state: string }
-    expect(row.state).toBe("applied")
-  })
-
-  it("fixes applying_down stuck migration — deletes the row", async () => {
-    env.writeFile("1.sql", SQL_1)
-    await env.service.apply()
-    env.db.prepare("UPDATE db_evolutions SET state = 'applying_down' WHERE id = 1").run()
-
-    const result = await env.service.resolve(1)
-    expect(result.status).toBe("success")
-    expect(countRows(env.db, "db_evolutions")).toBe(0)
-  })
-
-  it("returns failure for non-existent id", async () => {
-    env.writeFile("1.sql", SQL_1)
-    await env.service.apply()
-    const result = await env.service.resolve(99)
-    expect(result.status).toBe("failure")
-  })
 })
 
 describe("MigratorService.rollback()", () => {

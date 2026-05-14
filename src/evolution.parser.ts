@@ -1,47 +1,66 @@
 import { createHash } from "node:crypto"
-import type { Evolution } from "./types.js"
+
+import { Stream, Sink, Effect, Layer, Context, Data } from "effect"
+import { Evolution } from "./types.ts"
+import { Scope } from "effect/Scope"
+
+const UPS_MARKER = "-- #### !Ups"
+const DOWNS_MARKER = "-- #### !Downs"
+
+export class EvolutionFileParser extends Context.Tag("EvolutionFileParser")<EvolutionFileParser, {
+  parseEvolutionFile(lines: string[]): Effect.Effect<Evolution>,
+  computeHash(lines: string[]): Effect.Effect<string>,
+  extractSections(lines: string[]): Effect.Effect<{ up: string, down: string }>,
+  splitStatements(sql: string): string[]
+}>() { }
+
+export class EvolutionParseError extends Data.TaggedError("EvolutionParseError")<{}> {
+  constructor(error: any) {
+    super(error)
+  }
+}
 
 // ── Public API ─────────────────────────────────────────────────────────────────
 
-export const parseEvolutionFile = (id: number, content: string): Evolution => {
-  const { up, down } = extractSections(content)
-  return { id, up, down, hash: computeHash(up, down) }
+const computeHash = (lines: string[]): string => {
+  const hash = createHash("md5")
+  lines.forEach(line => hash.update(line.trim()))
+  return hash.digest("hex")
 }
 
-export const computeHash = (up: string, down: string): string =>
-  createHash("md5")
-    .update(down.trim() + up.trim())
-    .digest("hex")
+const parseEvolutionFile = (lines: string[]): Effect.Effect<Evolution, EvolutionParseError> => Effect.gen(function* () {
+  const { up, down } = yield* extractSections(lines)
+  return { up, down, hash: computeHash(lines) }
+})
+
+
+const extractSections = (lines: string[]): Effect.Effect<{ up: string, down: string }, EvolutionParseError> => {
+  const upsMarker = lines.findIndex(x => x.startsWith(UPS_MARKER))
+  const downsMarker = lines.findIndex(x => x.startsWith(DOWNS_MARKER))
+
+  if (!upsMarker) {
+    return Effect.fail(new EvolutionParseError("No Ups marker found in file"))
+  }
+  if (!downsMarker) {
+    return Effect.fail(new EvolutionParseError("No Downs marker found in file"))
+  }
+
+  return Effect.succeed({ up: lines.slice(upsMarker + 1, downsMarker - 1).join("\n"), down: lines.slice(downsMarker + 1).join("\n") })
+}
 
 /** Split SQL on `;` boundaries, but treat `;;` as a literal semicolon (not a statement boundary). */
-export const splitStatements = (sql: string): string[] =>
+const splitStatements = (sql: string): string[] =>
   sql
     .split(/(?<!;);(?!;)/)
     .map(s => s.trim())
     .filter(s => s.length > 0)
 
-// ── Helpers ────────────────────────────────────────────────────────────────────
-
-const UPS_MARKER = /^(?:--|#).*###!Ups/m
-const DOWNS_MARKER = /^(?:--|#).*###!Downs/m
-
-const extractSections = (content: string): { up: string; down: string } => {
-  const lines = content.split("\n")
-  let section: "up" | "down" | "none" = "none"
-  const upLines: string[] = []
-  const downLines: string[] = []
-
-  for (const line of lines) {
-    if (UPS_MARKER.test(line)) {
-      section = "up"
-    } else if (DOWNS_MARKER.test(line)) {
-      section = "down"
-    } else if (section === "up") {
-      upLines.push(line)
-    } else if (section === "down") {
-      downLines.push(line)
-    }
+export const EvolutionFileParserLive = () => Layer.succeed(
+  EvolutionFileParser,
+  {
+    parseEvolutionFile, computeHash, extractSections, splitStatements
   }
+)
 
-  return { up: upLines.join("\n"), down: downLines.join("\n") }
-}
+
+
