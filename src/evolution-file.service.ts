@@ -4,8 +4,8 @@ import { FileSystem } from "@effect/platform"
 import { resolveEvolutionFiles } from "./evolution.resolver.ts"
 import type { EvolutionFileRef } from "./evolution.resolver.ts"
 import type { Evolution, MigratorOptions } from "./types.ts"
-import { EvolutionFileParser, EvolutionParseError } from "./evolution.parser.ts"
-import { PlatformError } from "@effect/platform/Error"
+import { EvolutionFileParser, type EvolutionParseError } from "./evolution.parser.ts"
+import type { PlatformError } from "@effect/platform/Error"
 
 export class FileLineReader extends Context.Tag("FileLineReader")<FileLineReader, {
   lineStreamFromFile(path: string): Effect.Effect<Stream.Stream<string>, PlatformError>,

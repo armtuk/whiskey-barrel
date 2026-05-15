@@ -1,7 +1,7 @@
 import { z } from "zod"
-import { Stream, Data, Effect } from "effect"
+import { type Stream, Data, Effect } from "effect"
 import { only } from "node:test"
-import { UnknownException } from "effect/Cause"
+import type { UnknownException } from "effect/Cause"
 
 // ── Domain Models ──────────────────────────────────────────────────────────────
 

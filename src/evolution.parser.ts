@@ -1,9 +1,9 @@
 import { createHash } from "node:crypto"
 
 import { Stream, Sink, Effect, Layer, Context, Data } from "effect"
-import { Evolution } from "./types.ts"
+import type { Evolution } from "./types.ts"
 import { Scope } from "effect/Scope"
-import { PlatformError } from "@effect/platform/Error"
+import type { PlatformError } from "@effect/platform/Error"
 
 const UPS_MARKER = "-- #### !Ups"
 const DOWNS_MARKER = "-- #### !Downs"

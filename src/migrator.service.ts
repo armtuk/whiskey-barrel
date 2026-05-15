@@ -3,8 +3,8 @@ import { EvolutionFileService } from "./evolution-file.service.ts"
 import {
   type ApplyResult,
   applyResult,
-  DbType,
-  DivergedEvolution,
+  type DbType,
+  type DivergedEvolution,
   type Evolution,
   type EvolutionRecord,
   evolutionRecordValidator,
@@ -17,18 +17,18 @@ import {
   resolveResult,
   type RollbackResult,
   type StatusResult,
-  StatusStuckResult,
-  StatusSuccessResult,
+  type StatusStuckResult,
+  type StatusSuccessResult,
   NotFoundError
 } from "./types.js"
 import { Context, Effect, Layer, Option, Stream, pipe } from "effect"
 import { SqlRunner } from "./util/sql-runner.ts"
 import { zodParseEffect } from "./util/zodEffectUtil.ts"
 import { EvolutionRepository } from "./evolution.repository.ts"
-import { UnknownException } from "effect/Cause"
-import { ZodError } from "zod"
-import { PlatformError } from "@effect/platform/Error"
-import { EvolutionParseError } from "./evolution.parser.ts"
+import type { UnknownException } from "effect/Cause"
+import type { ZodError } from "zod"
+import type { PlatformError } from "@effect/platform/Error"
+import type { EvolutionParseError } from "./evolution.parser.ts"
 
 // ── Init SQL (inlined to avoid runtime file-loading complexity in dual ESM/CJS) ─
 

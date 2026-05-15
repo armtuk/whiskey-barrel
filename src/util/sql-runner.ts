@@ -1,7 +1,7 @@
 import { Context, Effect, Stream } from "effect"
 import type { Sql as PgSql } from "postgres"
 import type Database from "better-sqlite3"
-import { UnknownException } from "effect/Cause"
+import type { UnknownException } from "effect/Cause"
 
 export class SqlRunner extends Context.Tag("SqlRunner")<SqlRunner, {
   exec(s: string, params?: unknown[]): Effect.Effect<void, UnknownException, never>,

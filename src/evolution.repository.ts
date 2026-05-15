@@ -1,8 +1,8 @@
 
 import { Layer, Effect, Context, Option } from "effect";
-import { Evolution, EvolutionRecord, evolutionState, EvolutionState } from "./types.ts";
+import { type Evolution, type EvolutionRecord, evolutionState, type EvolutionState } from "./types.ts";
 import { SqlRunner } from "./util/sql-runner.ts";
-import { UnknownException } from "effect/Cause";
+import type { UnknownException } from "effect/Cause";
 
 export class EvolutionRepository extends Context.Tag("EvolutionRepository")<EvolutionRepository, {
   findById(id: number): Effect.Effect<Option.Option<EvolutionRecord>, UnknownException>

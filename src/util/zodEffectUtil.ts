@@ -1,5 +1,5 @@
 import { Effect } from "effect"
-import { z, ZodError } from "zod"
+import type { z, ZodError } from "zod"
 
 export const zodParseEffect = <T>(schema: z.ZodType<T>) => (input: unknown): Effect.Effect<T, ZodError> => {
   const result = schema.safeParse(input)
