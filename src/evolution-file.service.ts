@@ -6,9 +6,10 @@ import type { EvolutionFileRef } from "./evolution.resolver.ts"
 import type { Evolution, MigratorOptions } from "./types.ts"
 import { EvolutionFileParser, type EvolutionParseError } from "./evolution.parser.ts"
 import type { PlatformError } from "@effect/platform/Error"
+import type { UnknownException } from "effect/Cause"
 
 export class FileLineReader extends Context.Tag("FileLineReader")<FileLineReader, {
-  lineStreamFromFile(path: string): Effect.Effect<Stream.Stream<string>, PlatformError>,
+  lineStreamFromFile(path: string): Effect.Effect<Stream.Stream<string, PlatformError>, PlatformError>
   linesFromFile(path: string): Effect.Effect<string[], PlatformError, never>
 }>() { }
 
@@ -22,8 +23,7 @@ export const FileLineReaderLive = Layer.effect(
           Effect.map(() =>
             fs.stream(path).pipe(
               Stream.decodeText(),
-              Stream.splitLines,
-              Stream.catchAll(() => Stream.empty)
+              Stream.splitLines
             )
           )
         ),
@@ -52,7 +52,7 @@ export const FileLineReaderSimple = Layer.effect(
 )
 
 export class EvolutionFileService extends Context.Tag("EvolutionFileService")<EvolutionFileService, {
-  fetchEvolutions(): Effect.Effect<Evolution[], PlatformError | EvolutionParseError>
+  fetchEvolutions(): Effect.Effect<Evolution[], PlatformError | EvolutionParseError | UnknownException>
 }>() { }
 
 export const EvolutionFileServiceLive = (options: MigratorOptions) => Layer.effect(

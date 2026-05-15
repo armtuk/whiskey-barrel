@@ -202,7 +202,7 @@ describe("MigratorService.resolve()", () => {
 
     const result = await env.run(Effect.flatMap(MigratorService, svc => svc.resolve(1)))
 
-    expect(result.status).toBe("success")
+    expect(result._tag).toBe("ResolveSuccessResult")
     const row = env.db.prepare("SELECT state FROM db_evolutions WHERE id = 1").get() as { state: string }
     expect(row.state).toBe("applied")
   })
@@ -214,7 +214,7 @@ describe("MigratorService.resolve()", () => {
 
     const result = await env.run(Effect.flatMap(MigratorService, svc => svc.resolve(1)))
 
-    expect(result.status).toBe("success")
+    expect(result._tag).toBe("ResolveSuccessResult")
     expect(countRows(env.db, "db_evolutions")).toBe(0)
   })
 
@@ -223,7 +223,7 @@ describe("MigratorService.resolve()", () => {
     await env.run(Effect.flatMap(MigratorService, svc => svc.apply()))
 
     const result = await env.run(Effect.flatMap(MigratorService, svc => svc.resolve(99)))
-    expect(result.status).toBe("failure")
+    expect(result._tag).toBe("ResolveFailureResult")
   })
 
   it("returns failure for evolution that is not stuck", async () => {
@@ -232,6 +232,6 @@ describe("MigratorService.resolve()", () => {
 
     const result = await env.run(Effect.flatMap(MigratorService, svc => svc.resolve(1)))
 
-    expect(result.status).toBe("failure")
+    expect(result._tag).toBe("ResolveFailureResult")
   })
 })

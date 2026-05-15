@@ -15,8 +15,11 @@ const createSqliteDriver = async (path: string): Promise<MigrationDriver> => {
     const { default: Database } = await import("better-sqlite3")
     const { fromBetterSqlite3 } = await import("./better-sqlite3.driver.js")
     return fromBetterSqlite3(new Database(path))
-  } catch {
-    throw new Error('SQLite driver requires "better-sqlite3" as a dependency. Install it with: pnpm add better-sqlite3')
+  } catch (err) {
+    if (err instanceof Error && err.message.includes("Cannot find")) {
+      throw new Error('SQLite driver requires "better-sqlite3" as a dependency. Install it with: pnpm add better-sqlite3')
+    }
+    throw err
   }
 }
 
@@ -35,7 +38,10 @@ const createPostgresqlDriver = async (config: Extract<ConnectionConfig, { type: 
           ssl: config.ssl ?? false
         })
     return fromPostgresJs(sql)
-  } catch {
-    throw new Error('PostgreSQL driver requires "postgres" as a dependency. Install it with: pnpm add postgres')
+  } catch (err) {
+    if (err instanceof Error && err.message.includes("Cannot find")) {
+      throw new Error('PostgreSQL driver requires "postgres" as a dependency. Install it with: pnpm add postgres')
+    }
+    throw err
   }
 }

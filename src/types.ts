@@ -1,6 +1,5 @@
 import { z } from "zod"
 import { type Stream, Data, Effect } from "effect"
-import { only } from "node:test"
 import type { UnknownException } from "effect/Cause"
 
 // ── Domain Models ──────────────────────────────────────────────────────────────
@@ -139,26 +138,26 @@ export const applyResult = {
 }
 
 export interface RollbackSuccessResult {
-  status: "success"
+  _tag: "RollbackSuccessResult"
 }
 export interface RollbackFailureResult {
-  status: "failure"
+  _tag: "RollbackFailureResult"
   error: string
 }
 export type RollbackResult = RollbackSuccessResult | RollbackFailureResult
 
 export interface ResolveSuccessResult {
-  status: "success"
+  _tag: "ResolveSuccessResult"
   id: number
 }
 export interface ResolveFailureResult {
-  status: "failure"
+  _tag: "ResolveFailureResult"
   error: string
 }
 export type ResolveResult = ResolveSuccessResult | ResolveFailureResult
 export const resolveResult = {
-  failure: (error: string): ResolveFailureResult => ({ status: "failure", error }),
-  success: (id: number): ResolveSuccessResult => ({ status: "success", id })
+  failure: (error: string): ResolveFailureResult => ({ _tag: "ResolveFailureResult", error }),
+  success: (id: number): ResolveSuccessResult => ({ _tag: "ResolveSuccessResult", id })
 }
 
 // ── Errors (unexpected failures only) ─────────────────────────────────────────
@@ -172,11 +171,9 @@ export class InconsistentDatabaseError extends Error {
 
 export class InitializationError extends Data.TaggedError("InitializationError")<{}> { }
 
-export class NotFoundError extends Data.TaggedError("NotFoundError")<{}> {
-  constructor(public content: unknown) {
-    super()
-  }
-}
+export class NotFoundError extends Data.TaggedError("NotFoundError")<{
+  readonly content: unknown
+}> { }
 
 /** 
  * Holds a record where the evlutions may have potentiall diverged 
@@ -193,9 +190,8 @@ export class divergedEvolution {
     return !x.record && !!x.file
 
   }
-  /** There's a file and a record with a mismatched hash, means we need to rollback past x.file.hash, and reapply up */
   static isChangedHash = (x: DivergedEvolution) => {
-    return !!x.record && !!x.file
+    return !!x.record && !!x.file && x.record.hash !== x.file.hash
   }
   /** There's a record, and no file, means the file was removed, which we're going to treat as a rollback past x.record.hash */
   static isApplyDown = (x: DivergedEvolution) => {

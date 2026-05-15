@@ -110,7 +110,7 @@ export const MigratorServiceLive = (options: MigratorOptions) => Layer.effect(
       ).pipe(
         Stream.tap(x => repo.startDevolution(x)),
         Stream.tap(x => sqlRunner.exec(x.revert_script)),
-        Stream.tap(x => sqlRunner.exec(`delete from ${options.tableName} where hash = ?`, [x.hash])),
+        Stream.tap(x => sqlRunner.exec(`delete from ${options.tableName} where id = ?`, [x.id])),
         Stream.runDrain,
         Effect.map(x => applyResult.success())
       )
@@ -163,7 +163,11 @@ export const MigratorServiceLive = (options: MigratorOptions) => Layer.effect(
     })
 
     const findFirstDivergence = (files: Evolution[], records: EvolutionRecord[]): Option.Option<DivergedEvolution> => {
-      const paired: DivergedEvolution[] = Array.from(files, (val, i) => ({ file: val, record: records[i] }))
+      const maxLen = Math.max(files.length, records.length)
+      const paired: DivergedEvolution[] = Array.from({ length: maxLen }, (_, i) => ({
+        file: files[i] as Evolution | undefined,
+        record: records[i] as EvolutionRecord | undefined,
+      }))
       const unmatched: DivergedEvolution | undefined = paired.find(x => x.file?.hash !== x.record?.hash)
       return Option.fromNullable(unmatched)
     }
@@ -173,16 +177,17 @@ export const MigratorServiceLive = (options: MigratorOptions) => Layer.effect(
 
       const last = yield* pipe(
         fetchAllRecords(),
-        Effect.flatMap(rows => rows.length === 0 ? Effect.fail(new NotFoundError("No evolutions to roll back")) : Effect.succeed(rows.slice(-1)[0])),
+        Effect.flatMap(rows => rows.length === 0 ? Effect.fail(new NotFoundError({ content: "No evolutions to roll back" })) : Effect.succeed(rows.slice(-1)[0])),
         Effect.tap(revert => sqlRunner.exec(`UPDATE ${options.tableName} SET state = 'applying_down' WHERE id = ?`, [revert.id])),
         Effect.tap(revert => sqlRunner.exec(revert.revert_script)),
         Effect.tap(revert => sqlRunner.query(`DELETE FROM ${options.tableName} WHERE id = ?`, [revert.id])),
       )
 
-      return { status: "success", rolledBack: [last.id] }
+      return { _tag: "RollbackSuccessResult" as const, rolledBack: [last.id] }
     })
 
     const resolve = (id: number): Effect.Effect<ResolveResult, UnknownException> => Effect.gen(function* () {
+      yield* initialize()
       const r: Option.Option<EvolutionRecord> = yield* repo.findById(id)
 
       return yield* Option.match(r, {

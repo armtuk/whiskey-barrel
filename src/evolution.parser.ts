@@ -14,11 +14,9 @@ export class EvolutionFileParser extends Context.Tag("EvolutionFileParser")<Evol
   extractSections(lines: string[]): Effect.Effect<{ up: string, down: string }, EvolutionParseError>,
 }>() { }
 
-export class EvolutionParseError extends Data.TaggedError("EvolutionParseError")<{}> {
-  constructor(error: any) {
-    super(error)
-  }
-}
+export class EvolutionParseError extends Data.TaggedError("EvolutionParseError")<{
+  readonly error: unknown
+}> { }
 
 export const EvolutionFileParserLive = () => Layer.effect(
   EvolutionFileParser,
@@ -40,10 +38,10 @@ export const EvolutionFileParserLive = () => Layer.effect(
       const downsMarker = lines.findIndex(x => x.startsWith(DOWNS_MARKER))
 
       if (upsMarker === -1) {
-        return Effect.fail(new EvolutionParseError("No Ups marker found in file"))
+        return Effect.fail(new EvolutionParseError({ error: "No Ups marker found in file" }))
       }
       if (downsMarker === -1) {
-        return Effect.fail(new EvolutionParseError("No Downs marker found in file"))
+        return Effect.fail(new EvolutionParseError({ error: "No Downs marker found in file" }))
       }
 
       return Effect.succeed({ up: lines.slice(upsMarker + 1, downsMarker).join("\n"), down: lines.slice(downsMarker + 1).join("\n") })

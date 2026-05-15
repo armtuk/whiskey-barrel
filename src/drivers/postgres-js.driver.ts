@@ -1,5 +1,6 @@
 import type { Sql } from "postgres"
 import type { MigrationDriver } from "./driver.types.js"
+import { toPostgresParams } from "../util/sql-runner.ts"
 
 export const fromPostgresJs = (sql: Sql): MigrationDriver => ({
   exec: async (s: string): Promise<void> => {
@@ -10,8 +11,3 @@ export const fromPostgresJs = (sql: Sql): MigrationDriver => ({
     return sql.unsafe(query, params as Parameters<typeof sql.unsafe>[1]) as Promise<T[]>
   }
 })
-
-const toPostgresParams = (sql: string): string => {
-  let index = 0
-  return sql.replace(/\?/g, () => `$${++index}`)
-}
