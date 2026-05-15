@@ -11,21 +11,24 @@ export class SqlRunner extends Context.Tag("SqlRunner")<SqlRunner, {
 
 export const fromPostgresJs = (sql: PgSql) => ({
   exec(s: string, params?: unknown[]): Effect.Effect<void, UnknownException, never> {
+    const query = params && params.length > 0 ? toPostgresParams(s) : s
     return Effect.tryPromise(() =>
-      sql.unsafe(s, params as Parameters<typeof sql.unsafe>[1])
+      sql.unsafe(query, params as Parameters<typeof sql.unsafe>[1])
     )
   },
 
   query<T = Record<string, unknown>>(s: string, params: unknown[] = []): Effect.Effect<T[], UnknownException, never> {
+    const query = params.length === 0 ? s : toPostgresParams(s)
     return Effect.tryPromise(() =>
-      sql.unsafe(s, params as Parameters<typeof sql.unsafe>[1]) as Promise<T[]>
+      sql.unsafe(query, params as Parameters<typeof sql.unsafe>[1]) as Promise<T[]>
     )
   },
 
   queryStream<T = Record<string, unknown>>(s: string, params: unknown[] = []): Stream.Stream<T, UnknownException, never> {
+    const query = params.length === 0 ? s : toPostgresParams(s)
     return Stream.fromIterableEffect(
       Effect.tryPromise<T[]>(() =>
-        sql.unsafe(s, params as Parameters<typeof sql.unsafe>[1]) as Promise<T[]>
+        sql.unsafe(query, params as Parameters<typeof sql.unsafe>[1]) as Promise<T[]>
       )
     )
   }
@@ -65,3 +68,8 @@ export const fromBetterSqlite3 = (db: Database.Database) => ({
     )
   }
 })
+
+const toPostgresParams = (sql: string): string => {
+  let index = 0
+  return sql.replace(/\?/g, () => `$${++index}`)
+}

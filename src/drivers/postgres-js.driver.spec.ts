@@ -62,9 +62,20 @@ describe("postgres-js driver", () => {
     expect(rows).toHaveLength(2)
   })
 
+  it("query binds driver-style ? parameters in order", async () => {
+    const rows = await driver.query<{ id: number; name: string }>(
+      `SELECT * FROM ${TEST_TABLE} WHERE id = ? AND name = ?`,
+      [1, "alice"]
+    )
+
+    expect(rows).toHaveLength(1)
+    expect(rows[0].id).toBe(1)
+    expect(rows[0].name).toBe("alice")
+  })
+
   it("query returns parameterized results", async () => {
     const rows = await driver.query<{ id: number; name: string }>(
-      `SELECT * FROM ${TEST_TABLE} WHERE name = $1`,
+      `SELECT * FROM ${TEST_TABLE} WHERE name = ?`,
       ["alice"]
     )
 
@@ -75,7 +86,7 @@ describe("postgres-js driver", () => {
 
   it("query returns empty array when no matches", async () => {
     const rows = await driver.query(
-      `SELECT * FROM ${TEST_TABLE} WHERE name = $1`,
+      `SELECT * FROM ${TEST_TABLE} WHERE name = ?`,
       ["nobody"]
     )
 
