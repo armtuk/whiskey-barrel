@@ -1,5 +1,5 @@
 import type { MigrationDriver } from "./drivers/driver.types.js"
-import { EvolutionFileService } from "./evolution.file.service.js"
+import { EvolutionFileService } from "./evolution-file.service.ts"
 import {
   type ApplyResult,
   applyResult,
@@ -60,7 +60,8 @@ const inits: Record<DbType, string> = {
 
 // Service Tag
 export class MigratorService extends Context.Tag("MigratorService")<MigratorService, {
-  apply: () => Effect.Effect<ApplyResult>
+  apply: () => Effect.Effect<ApplyResult>,
+  resolve: (id: number) => Effect.Effect<ResolveResult, UnknownException>
 }>() { }
 
 

@@ -1,112 +1,184 @@
 import { describe, expect, it } from "vitest"
-import { computeHash, parseEvolutionFile, splitStatements } from "./evolution.parser.js"
+import { Effect } from "effect"
+import { EvolutionFileParser, EvolutionFileParserLive } from "./evolution.parser.js"
 
-const STANDARD_FILE = `
--- ###!Ups
-CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT NOT NULL);
+const parserLayer = EvolutionFileParserLive()
 
--- ###!Downs
-DROP TABLE users;
-`
+const run = <A, E>(effect: Effect.Effect<A, E, EvolutionFileParser>): Promise<A> =>
+  Effect.runPromise(Effect.provide(effect, parserLayer))
 
-const HASH_COMMENT_FILE = `
-# ###!Ups
-CREATE TABLE posts (id INTEGER PRIMARY KEY);
-# ###!Downs
-DROP TABLE posts;
-`
+// ── Fixtures ───────────────────────────────────────────────────────────────────
 
-const MULTI_SECTION_FILE = `
--- ###!Ups
-CREATE TABLE a (id INTEGER PRIMARY KEY);
--- ###!Downs
-DROP TABLE a;
--- ###!Ups
-CREATE TABLE b (id INTEGER PRIMARY KEY);
--- ###!Downs
-DROP TABLE b;
-`
+const STANDARD_LINES = [
+  "-- #### !Ups",
+  "CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT NOT NULL);",
+  "",
+  "-- #### !Downs",
+  "DROP TABLE users;"
+]
+
+const MULTI_STATEMENT_LINES = [
+  "-- #### !Ups",
+  "CREATE TABLE users (id INTEGER PRIMARY KEY);",
+  "CREATE TABLE posts (id INTEGER PRIMARY KEY);",
+  "-- #### !Downs",
+  "DROP TABLE posts;",
+  "DROP TABLE users;"
+]
+
+// ── Tests ──────────────────────────────────────────────────────────────────────
 
 describe("parseEvolutionFile", () => {
-  it("parses standard -- ###!Ups / -- ###!Downs markers", () => {
-    const result = parseEvolutionFile(1, STANDARD_FILE)
-    expect(result.id).toBe(1)
+  it("parses standard -- #### !Ups / -- #### !Downs markers", async () => {
+    const result = await run(
+      Effect.flatMap(EvolutionFileParser, svc => svc.parseEvolutionFile(STANDARD_LINES))
+    )
     expect(result.up).toContain("CREATE TABLE users")
     expect(result.down).toContain("DROP TABLE users")
   })
 
-  it("parses # ###!Ups / # ###!Downs hash-comment markers", () => {
-    const result = parseEvolutionFile(2, HASH_COMMENT_FILE)
+  it("produces a valid MD5 hash", async () => {
+    const result = await run(
+      Effect.flatMap(EvolutionFileParser, svc => svc.parseEvolutionFile(STANDARD_LINES))
+    )
+    expect(result.hash).toMatch(/^[a-f0-9]{32}$/)
+  })
+
+  it("changing the down section changes the hash", async () => {
+    const linesA = [
+      "-- #### !Ups",
+      "CREATE TABLE x (id INT);",
+      "-- #### !Downs",
+      "DROP TABLE x;"
+    ]
+    const linesB = [
+      "-- #### !Ups",
+      "CREATE TABLE x (id INT);",
+      "-- #### !Downs",
+      "DROP TABLE x CASCADE;"
+    ]
+
+    const [a, b] = await Promise.all([
+      run(Effect.flatMap(EvolutionFileParser, svc => svc.parseEvolutionFile(linesA))),
+      run(Effect.flatMap(EvolutionFileParser, svc => svc.parseEvolutionFile(linesB)))
+    ])
+
+    expect(a.hash).not.toBe(b.hash)
+  })
+
+  it("handles multiple statements in each section", async () => {
+    const result = await run(
+      Effect.flatMap(EvolutionFileParser, svc => svc.parseEvolutionFile(MULTI_STATEMENT_LINES))
+    )
+    expect(result.up).toContain("CREATE TABLE users")
     expect(result.up).toContain("CREATE TABLE posts")
     expect(result.down).toContain("DROP TABLE posts")
+    expect(result.down).toContain("DROP TABLE users")
+  })
+})
+
+describe("extractSections", () => {
+  it("extracts up and down sections", async () => {
+    const result = await run(
+      Effect.flatMap(EvolutionFileParser, svc => svc.extractSections(STANDARD_LINES))
+    )
+    expect(result.up).toContain("CREATE TABLE users")
+    expect(result.down).toContain("DROP TABLE users")
   })
 
-  it("concatenates multiple ###!Ups sections", () => {
-    const result = parseEvolutionFile(3, MULTI_SECTION_FILE)
-    expect(result.up).toContain("CREATE TABLE a")
-    expect(result.up).toContain("CREATE TABLE b")
+  it("fails when no Ups marker is present", async () => {
+    const lines = ["CREATE TABLE users (id INT);", "-- #### !Downs", "DROP TABLE users;"]
+
+    await expect(
+      run(Effect.flatMap(EvolutionFileParser, svc => svc.extractSections(lines)))
+    ).rejects.toThrow()
   })
 
-  it("concatenates multiple ###!Downs sections", () => {
-    const result = parseEvolutionFile(3, MULTI_SECTION_FILE)
-    expect(result.down).toContain("DROP TABLE a")
-    expect(result.down).toContain("DROP TABLE b")
+  it("fails when no Downs marker is present", async () => {
+    const lines = ["-- #### !Ups", "CREATE TABLE users (id INT);"]
+
+    await expect(
+      run(Effect.flatMap(EvolutionFileParser, svc => svc.extractSections(lines)))
+    ).rejects.toThrow()
   })
 
-  it("produces empty strings when no markers are present", () => {
-    const result = parseEvolutionFile(1, "-- just a comment\nCREATE TABLE foo (id INT);")
-    expect(result.up).toBe("")
-    expect(result.down).toBe("")
+  it("up section does not include the marker lines", async () => {
+    const result = await run(
+      Effect.flatMap(EvolutionFileParser, svc => svc.extractSections(STANDARD_LINES))
+    )
+    expect(result.up).not.toContain("#### !Ups")
+    expect(result.up).not.toContain("#### !Downs")
   })
 
-  it("hash is MD5 of down.trim() + up.trim()", () => {
-    const result = parseEvolutionFile(1, STANDARD_FILE)
-    const expected = computeHash(result.up, result.down)
-    expect(result.hash).toBe(expected)
-  })
-
-  it("changing only the down section changes the hash", () => {
-    const fileA = "-- ###!Ups\nCREATE TABLE x (id INT);\n-- ###!Downs\nDROP TABLE x;"
-    const fileB = "-- ###!Ups\nCREATE TABLE x (id INT);\n-- ###!Downs\nDROP TABLE x CASCADE;"
-    const a = parseEvolutionFile(1, fileA)
-    const b = parseEvolutionFile(1, fileB)
-    expect(a.hash).not.toBe(b.hash)
+  it("down section does not include the marker line", async () => {
+    const result = await run(
+      Effect.flatMap(EvolutionFileParser, svc => svc.extractSections(STANDARD_LINES))
+    )
+    expect(result.down).not.toContain("#### !Downs")
   })
 })
 
 describe("computeHash", () => {
-  it("uses down-first ordering: MD5(down.trim() + up.trim())", async () => {
+  it("produces consistent MD5 hash", async () => {
     const { createHash } = await import("node:crypto")
-    const up = "CREATE TABLE x (id INT);"
-    const down = "DROP TABLE x;"
+    const lines = ["line1", "line2", "line3"]
+
+    const result = await run(
+      Effect.map(EvolutionFileParser, svc => svc.computeHash(lines))
+    )
+
     const expected = createHash("md5")
-      .update(down.trim() + up.trim())
-      .digest("hex")
-    expect(computeHash(up, down)).toBe(expected)
+    lines.forEach(l => expected.update(l.trim()))
+    expect(result).toBe(expected.digest("hex"))
+  })
+
+  it("same content produces same hash", async () => {
+    const lines = ["-- #### !Ups", "CREATE TABLE x (id INT);", "-- #### !Downs", "DROP TABLE x;"]
+
+    const [a, b] = await Promise.all([
+      run(Effect.map(EvolutionFileParser, svc => svc.computeHash(lines))),
+      run(Effect.map(EvolutionFileParser, svc => svc.computeHash(lines)))
+    ])
+
+    expect(a).toBe(b)
   })
 })
 
 describe("splitStatements", () => {
-  it("splits on single semicolons", () => {
-    const sql = "CREATE TABLE a (id INT); CREATE TABLE b (id INT);"
-    expect(splitStatements(sql)).toEqual(["CREATE TABLE a (id INT)", "CREATE TABLE b (id INT)"])
+  it("splits on single semicolons", async () => {
+    const result = await run(
+      Effect.flatMap(EvolutionFileParser, svc =>
+        Effect.succeed(svc.splitStatements("CREATE TABLE a (id INT); CREATE TABLE b (id INT);"))
+      )
+    )
+    expect(result).toEqual(["CREATE TABLE a (id INT)", "CREATE TABLE b (id INT)"])
   })
 
-  it("does not split on ;; escaped semicolons", () => {
-    const sql = "INSERT INTO t VALUES ('a;;b'); SELECT 1;"
-    const parts = splitStatements(sql)
-    expect(parts).toHaveLength(2)
-    expect(parts[0]).toContain("a;;b")
+  it("does not split on ;; escaped semicolons", async () => {
+    const result = await run(
+      Effect.flatMap(EvolutionFileParser, svc =>
+        Effect.succeed(svc.splitStatements("INSERT INTO t VALUES ('a;;b'); SELECT 1;"))
+      )
+    )
+    expect(result).toHaveLength(2)
+    expect(result[0]).toContain("a;;b")
   })
 
-  it("trims and filters empty segments", () => {
-    const sql = "  SELECT 1 ;  ; SELECT 2;  "
-    const parts = splitStatements(sql)
-    expect(parts).toEqual(["SELECT 1", "SELECT 2"])
+  it("trims and filters empty segments", async () => {
+    const result = await run(
+      Effect.flatMap(EvolutionFileParser, svc =>
+        Effect.succeed(svc.splitStatements("  SELECT 1 ;  ; SELECT 2;  "))
+      )
+    )
+    expect(result).toEqual(["SELECT 1", "SELECT 2"])
   })
 
-  it("returns empty array for blank input", () => {
-    expect(splitStatements("")).toEqual([])
-    expect(splitStatements("   ")).toEqual([])
+  it("returns empty array for blank input", async () => {
+    const [a, b] = await Promise.all([
+      run(Effect.flatMap(EvolutionFileParser, svc => Effect.succeed(svc.splitStatements("")))),
+      run(Effect.flatMap(EvolutionFileParser, svc => Effect.succeed(svc.splitStatements("   "))))
+    ])
+    expect(a).toEqual([])
+    expect(b).toEqual([])
   })
 })
