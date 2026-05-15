@@ -1,11 +1,12 @@
 import { z } from "zod"
 import { Stream, Data, Effect } from "effect"
 import { only } from "node:test"
+import { UnknownException } from "effect/Cause"
 
 // ── Domain Models ──────────────────────────────────────────────────────────────
 
 export const evolutionStates: Array<string> = ["applying_up", "applied", "applying_down"] as const
-type EvolutionState = typeof evolutionStates[number]
+export type EvolutionState = typeof evolutionStates[number]
 
 export const evolutionState: Record<string, EvolutionState> = {
   applyingDown: "applying_down",
@@ -15,11 +16,12 @@ export const evolutionState: Record<string, EvolutionState> = {
 export const evolutionStateValidator = z.enum(evolutionStates)
 
 export const evolutionValidator = z.object({
+  id: z.number(),
   up: z.string(),
   down: z.string(),
   hash: z.string()
-})
-  .strict()
+}).strict()
+
 export type Evolution = z.infer<typeof evolutionValidator>
 
 export type EvolutionLazy = {
@@ -28,20 +30,18 @@ export type EvolutionLazy = {
   hash: (stream: Stream.Stream<string>) => Effect.Effect<string>
 }
 
-export const evolutionRecordValidator = z
-  .object({
-    id: z.number().int().positive(),
-    hash: z.string(),
-    applied_at: z.coerce.date(),
-    apply_script: z.string(),
-    revert_script: z.string(),
-    state: evolutionStateValidator,
-    last_problem: z.string().nullable()
-  })
-  .strict()
+export const evolutionRecordValidator = z.object({
+  id: z.number().int().positive(),
+  hash: z.string(),
+  applied_at: z.coerce.date(),
+  apply_script: z.string(),
+  revert_script: z.string(),
+  state: evolutionStateValidator,
+  last_problem: z.string().nullable()
+}).strict()
+
 export type EvolutionRecord = z.infer<typeof evolutionRecordValidator>
 
-// ── Configuration ──────────────────────────────────────────────────────────────
 
 export const dbTypes = ["postgresql", "sqlite"] as const
 
@@ -52,7 +52,6 @@ export const dbType: Record<typeof dbTypes[number], typeof dbTypes[number]> = {
 
 export type DbType = typeof dbTypes[number]
 
-// ── Connection Config ─────────────────────────────────────────────────────────
 
 export const postgresqlConnectionConfigValidator = z.object({
   type: z.literal("postgresql"),
@@ -80,18 +79,15 @@ export type SqliteConnectionConfig = z.infer<typeof sqliteConnectionConfigValida
 export type ConnectionConfig = z.infer<typeof connectionConfigValidator>
 
 
-export const migratorOptionsValidator = z
-  .object({
-    dbName: z.string(),
-    dbType: z.enum(dbTypes),
-    evolutionsRoot: z.string().default("conf/evolutions"),
-    tableName: z
-      .string()
-      .regex(/^[a-zA-Z_][a-zA-Z0-9_]*$/, "tableName must be a valid SQL identifier")
-      .default("db_evolutions"),
-    autoApply: z.boolean().default(false)
-  })
-  .strict()
+export const migratorOptionsValidator = z.object({
+  dbName: z.string(),
+  dbType: z.enum(dbTypes),
+  evolutionsRoot: z.string().default("conf/evolutions"),
+  tableName: z
+    .string()
+    .regex(/^[a-zA-Z_][a-zA-Z0-9_]*$/, "tableName must be a valid SQL identifier")
+    .default("db_evolutions"),
+}).strict()
 
 export type MigratorOptions = z.infer<typeof migratorOptionsValidator>
 
@@ -130,8 +126,8 @@ export interface ApplyFailureResult {
 export type ApplyResult = ApplySuccessResult | ApplyFailureResult
 
 export const applyResult = {
-  success: () => { _tag: "ApplySuccessResult" },
-  failure: (error: string, evolutionRecord?: EvolutionRecord) => ({ _tag: "ApplyFailureResult", error, evolutionRecord })
+  success: (): ApplySuccessResult => ({ _tag: "ApplySuccessResult" }),
+  failure: (error: string, evolutionRecord?: EvolutionRecord): ApplyFailureResult => ({ _tag: "ApplyFailureResult", error, evolutionRecord })
 }
 
 export interface RollbackSuccessResult {
@@ -153,8 +149,8 @@ export interface ResolveFailureResult {
 }
 export type ResolveResult = ResolveSuccessResult | ResolveFailureResult
 export const resolveResult = {
-  failure: (error: string) => ({ status: "failure", error }),
-  success: (id: number) => ({ status: "success", id })
+  failure: (error: string): ResolveFailureResult => ({ status: "failure", error }),
+  success: (id: number): ResolveSuccessResult => ({ status: "success", id })
 }
 
 // ── Errors (unexpected failures only) ─────────────────────────────────────────
@@ -172,4 +168,43 @@ export class NotFoundError extends Data.TaggedError("NotFoundError")<{}> {
   constructor(public content: unknown) {
     super()
   }
-} 
+}
+
+/** 
+ * Holds a record where the evlutions may have potentiall diverged 
+ */
+export interface DivergedEvolution {
+  file: Evolution | undefined
+  record: EvolutionRecord | undefined
+}
+
+/** Operations for DivergedEvolutions */
+export class divergedEvolution {
+  /** There's a new file and no corresponding record, means we have new files to apply */
+  static isApplyUp = (x: DivergedEvolution) => {
+    return !x.record && !!x.file
+
+  }
+  /** There's a file and a record with a mismatched hash, means we need to rollback past x.file.hash, and reapply up */
+  static isChangedHash = (x: DivergedEvolution) => {
+    return !!x.record && !!x.file
+  }
+  /** There's a record, and no file, means the file was removed, which we're going to treat as a rollback past x.record.hash */
+  static isApplyDown = (x: DivergedEvolution) => {
+    return !!x.record && !x.file
+  }
+  /** There's neither a record nor a file, which means the database records, and file records are matched, including potential none of either */
+  static notDiverged = (x: DivergedEvolution) => {
+    return !x.record && !x.file
+  }
+
+  static match(d: DivergedEvolution, callback: {
+    onUp: (d: DivergedEvolution) => Effect.Effect<ApplyResult, UnknownException>
+    onDownUp: (d: DivergedEvolution) => Effect.Effect<ApplyResult, UnknownException>
+    onDown: (d: DivergedEvolution) => Effect.Effect<ApplyResult, UnknownException>
+  }) {
+    if (divergedEvolution.isApplyUp(d)) return callback.onUp(d)
+    if (divergedEvolution.isChangedHash(d)) return callback.onDownUp(d)
+    if (divergedEvolution.isApplyDown(d)) return callback.onDown(d)
+  }
+}

@@ -4,10 +4,12 @@ import {
   type ApplyResult,
   applyResult,
   DbType,
+  DivergedEvolution,
   type Evolution,
   type EvolutionRecord,
   evolutionRecordValidator,
   evolutionState,
+  divergedEvolution,
   InconsistentDatabaseError,
   InitializationError,
   type MigratorOptions,
@@ -16,7 +18,8 @@ import {
   type RollbackResult,
   type StatusResult,
   StatusStuckResult,
-  StatusSuccessResult
+  StatusSuccessResult,
+  NotFoundError
 } from "./types.js"
 import { Context, Effect, Layer, Option, Stream, pipe } from "effect"
 import { SqlRunner } from "./util/sql-runner.ts"
@@ -98,94 +101,105 @@ export const MigratorServiceLive = (options: MigratorOptions) => Layer.effect(
         Effect.map(chunk => Array.from(chunk))
       )
 
+    const applyDownToDiverged = (diverged: DivergedEvolution, files: Evolution[], records: EvolutionRecord[]): Effect.Effect<ApplyResult, UnknownException> => {
+      return Stream.fromIterable(
+        [...records.slice(records.findIndex(x => x.hash === diverged.record?.hash))].reverse()
+      ).pipe(
+        Stream.tap(x => repo.startDevolution(x)),
+        Stream.tap(x => sqlRunner.exec(x.revert_script)),
+        Stream.tap(x => sqlRunner.exec(`delete from ${options.tableName} where hash = ?`, [x.hash])),
+        Stream.runDrain,
+        Effect.map(x => applyResult.success())
+      )
+    }
+
+    const applyUpFromDiverged = (diverged: DivergedEvolution, files: Evolution[], records: EvolutionRecord[]) => {
+      return Stream.fromIterable(
+        // findIndex will give the first index where recores and file mismatch, which, should be the file file to apply
+        files.slice(files.findIndex(x => x.hash === diverged.file?.hash))
+      ).pipe(
+        Stream.tap(x => repo.startEvolution(x)),
+        Stream.tap(x => sqlRunner.exec(x.up)),
+        Stream.tap(x => repo.setApplied(x)), // I'm imagining this will error here if there was a problem and stop
+        Stream.runDrain,
+        Effect.map(_ => applyResult.success())
+      )
+    }
+
     const apply = (): Effect.Effect<ApplyResult> => Effect.gen(function* () {
       yield* initialize()
 
       // TODO see if we can decompose this
       const x = yield* status()
       if (x._tag === "stuck") {
-        return yield* Effect.fail(applyResult.failure(
+        return applyResult.failure(
           x.message,
           x.evolutionRecord
-        ))
+        )
       }
       if (x._tag === "failure") {
-        return yield* Effect.fail(applyResult.failure(
+        return applyResult.failure(
           x.error || "Unknown error applying evolutions"
-        ))
+        )
       }
 
       const files = yield* fileService.fetchEvolutions()
       const records = yield* fetchAllRecords()
 
-      const diverged = findFirstDivergence(files, records).flatMap(v => v)
-      if (diverged[0] !== null && !options.autoApply) {
-        return { status: "conflict", changedAt: changeId, details: `Evolution ${changeId} hash has changed` }
-      }
-
-      const plan = buildPlan(files, records, changeId)
-      if (plan.downs.length === 0 && plan.ups.length === 0) {
-        return { status: "success", applied: [], rolledBack: [] }
-      }
-
-      return executePlan(plan)
+      return yield* Option.match(findFirstDivergence(files, records), {
+        onSome: v => divergedEvolution.match(v, {
+          onUp: d => applyUpFromDiverged(d, files, records),
+          onDown: d => applyDownToDiverged(d, files, records),
+          onDownUp: d => pipe(
+            applyDownToDiverged(d, files, records),
+            Effect.flatMap(_ => applyUpFromDiverged(d, files, records))
+          )
+        }),
+        onNone: () => Effect.succeed(applyResult.success())
+      })
     })
 
-    const findFirstDivergence = (files: Evolution[], records: EvolutionRecord[]): Option.Option<[Evolution | undefined, EvolutionRecord | undefined]> => {
-      const paired = Array.from(files, (val, i) => [val, records[i]])
-      return Option.fromNullable(paired.find(([a, b]) => a?.hash !== b?.hash))
+    const findFirstDivergence = (files: Evolution[], records: EvolutionRecord[]): Option.Option<DivergedEvolution> => {
+      const paired: DivergedEvolution[] = Array.from(files, (val, i) => ({ file: val, record: records[i] }))
+      const unmatched: DivergedEvolution | undefined = paired.find(x => x.file?.hash !== x.record?.hash)
+      return Option.fromNullable(unmatched)
     }
 
     const rollback = () => Effect.gen(function* () {
       yield* initialize()
 
-      yield* pipe(
+      const last = yield* pipe(
         fetchAllRecords(),
-        Effect.map(x => x.slice(-1)[0]),
+        Effect.flatMap(rows => rows.length === 0 ? Effect.fail(new NotFoundError("No evolutions to roll back")) : Effect.succeed(rows.slice(-1)[0])),
         Effect.tap(revert => sqlRunner.exec(`UPDATE ${options.tableName} SET state = 'applying_down' WHERE id = ?`, [revert.id])),
-        Effect.flatMap(revert => {
-          return pipe(revert,
-            sqlRunner.exec(revert.revert_script)
-          )
-        })
-        Effect.tap(revert => sqlRunner.query(`DELETE FROM ${options.tableName} WHERE id = ?`, [last.id])),
+        Effect.tap(revert => sqlRunner.exec(revert.revert_script)),
+        Effect.tap(revert => sqlRunner.query(`DELETE FROM ${options.tableName} WHERE id = ?`, [revert.id])),
       )
 
       return { status: "success", rolledBack: [last.id] }
     })
 
-    const resolve = (id: number): Effect.Effect<ResolveResult, never, SqlRunner> => Effect.gen(function* () {
-      const sql = yield* SqlRunner
+    const resolve = (id: number): Effect.Effect<ResolveResult, UnknownException> => Effect.gen(function* () {
+      const r: Option.Option<EvolutionRecord> = yield* repo.findById(id)
 
-      const r: EvolutionRecord[] = yield* sql.query<EvolutionRecord>(`select * from ${self.table} where id = :id`, { id })
+      return yield* Option.match(r, {
+        onNone: () => Effect.succeed(resolveResult.failure(`Evolution ${id} not found`)),
+        onSome: (value) => Effect.gen(function* () {
+          if (value.state === evolutionState.applyingUp) {
+            yield* sqlRunner.query(`update ${options.tableName} set state = ?, last_problem = null where id = ?`, [evolutionState.applied, value.id])
+            return resolveResult.success(id)
+          }
+          else if (value.state === evolutionState.applyingDown) {
+            yield* sqlRunner.query(`delete from ${options.tableName} where id = ?`, [value.id])
+            return resolveResult.success(id)
+          } else {
+            return resolveResult.failure(`Evolution ${value.id} is not stuck (state: ${value.state})`)
+          }
+        })
+      })
 
-      if (!r) return resolveResult.failure(`Evolution ${id} not found`)
-
-      if (r.state === "applying_up") {
-        await this.driver.query(`UPDATE ${this.table} SET state = 'applied', last_problem = NULL WHERE id = ?`, [id])
-        return { status: "success", id }
-      } else if (record.state === "applying_down") {
-        await this.driver.query(`DELETE FROM ${this.table} WHERE id = ?`, [id])
-        return { status: "success", id }
-      } else {
-        return { status: "failure", error: `Evolution ${id} is not stuck (state: ${record.state})` }
-      }
     })
 
-    const executePlan = (plan: MigrationPlan): EvolutionRecord[] => {
-      records.filter(r => r.state === "applying_up" || r.state === "applying_down")
-    }
-
-    return { apply }
+    return { apply, resolve }
   })
-
-const buildPlan = (files: Evolution[], records: EvolutionRecord[], changeId: number | null): MigrationPlan => {
-  if (changeId === null) {
-    const appliedIds = new Set(records.map(r => r.id))
-    return { downs: [], ups: files.filter(f => !appliedIds.has(f.id)) }
-  }
-  return {
-    downs: records.filter(r => r.id >= changeId).sort((a, b) => b.id - a.id),
-    ups: files.filter(f => f.id >= changeId)
-  }
-}
+)

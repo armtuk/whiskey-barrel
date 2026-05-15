@@ -36,7 +36,6 @@ const createTestEnv = (opts: Partial<MigratorOptions> = {}): TestEnv => {
     dbName: "testdb",
     evolutionsRoot,
     tableName: "db_evolutions",
-    autoApply: false,
     ...opts
   }
 
@@ -122,7 +121,6 @@ describe("MigratorService.apply()", () => {
       dbName: "testdb",
       evolutionsRoot: env.evolutionsRoot,
       tableName: "db_evolutions",
-      autoApply: true
     })
     await svc.apply()
 
