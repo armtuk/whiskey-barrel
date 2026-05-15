@@ -22,22 +22,20 @@ const createSqliteDriver = async (path: string): Promise<MigrationDriver> => {
 
 const createPostgresqlDriver = async (config: Extract<ConnectionConfig, { type: "postgresql" }>): Promise<MigrationDriver> => {
   try {
-    const { Pool } = await import("pg")
-    const { fromPgPool } = await import("./pg.driver.js")
-
-    const pool = config.connectionString
-      ? new Pool({ connectionString: config.connectionString, ssl: config.ssl ? { rejectUnauthorized: false } : undefined })
-      : new Pool({
-        host: config.host,
-        port: config.port,
-        database: config.database,
-        user: config.user,
-        password: config.password,
-        ssl: config.ssl ? { rejectUnauthorized: false } : undefined
-      })
-
-    return fromPgPool(pool)
+    const { default: postgres } = await import("postgres")
+    const { fromPostgresJs } = await import("./postgres-js.driver.js")
+    const sql = config.connectionString
+      ? postgres(config.connectionString)
+      : postgres({
+          host: config.host,
+          port: config.port,
+          database: config.database,
+          username: config.user,
+          password: config.password,
+          ssl: config.ssl ?? false
+        })
+    return fromPostgresJs(sql)
   } catch {
-    throw new Error('PostgreSQL driver requires "pg" as a dependency. Install it with: pnpm add pg')
+    throw new Error('PostgreSQL driver requires "postgres" as a dependency. Install it with: pnpm add postgres')
   }
 }

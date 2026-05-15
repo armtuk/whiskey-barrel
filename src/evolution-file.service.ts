@@ -4,7 +4,7 @@ import { FileSystem } from "@effect/platform"
 import { resolveEvolutionFiles } from "./evolution.resolver.ts"
 import type { EvolutionFileRef } from "./evolution.resolver.ts"
 import type { Evolution, MigratorOptions } from "./types.ts"
-import { EvolutionFileParser } from "./evolution.parser.ts"
+import { EvolutionFileParser, EvolutionParseError } from "./evolution.parser.ts"
 import { PlatformError } from "@effect/platform/Error"
 
 export class FileLineReader extends Context.Tag("FileLineReader")<FileLineReader, {
@@ -52,7 +52,7 @@ export const FileLineReaderSimple = Layer.effect(
 )
 
 export class EvolutionFileService extends Context.Tag("EvolutionFileService")<EvolutionFileService, {
-  fetchEvolutions(): Effect.Effect<Evolution[], PlatformError>
+  fetchEvolutions(): Effect.Effect<Evolution[], PlatformError | EvolutionParseError>
 }>() { }
 
 export const EvolutionFileServiceLive = (options: MigratorOptions) => Layer.effect(
@@ -63,8 +63,11 @@ export const EvolutionFileServiceLive = (options: MigratorOptions) => Layer.effe
 
     const parseFile = (fileRef: EvolutionFileRef) =>
       lineReader.linesFromFile(fileRef.filePath).pipe(
-        Effect.flatMap(lines =>
-          parser.parseEvolutionFile(lines)
+        Effect.flatMap(lines => parser.parseEvolutionFile(lines)),
+        Effect.map(x => ({
+          ...x,
+          id: fileRef.id
+        } as Evolution)
         )
       )
 

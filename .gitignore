@@ -11,3 +11,6 @@ AGENTS.md
 .agents/
 claude-sessions/
 feature-planning.session.id
+
+# Environmental configurations
+.env.*

@@ -27,6 +27,8 @@ import { zodParseEffect } from "./util/zodEffectUtil.ts"
 import { EvolutionRepository } from "./evolution.repository.ts"
 import { UnknownException } from "effect/Cause"
 import { ZodError } from "zod"
+import { PlatformError } from "@effect/platform/Error"
+import { EvolutionParseError } from "./evolution.parser.ts"
 
 // ── Init SQL (inlined to avoid runtime file-loading complexity in dual ESM/CJS) ─
 
@@ -60,7 +62,7 @@ const inits: Record<DbType, string> = {
 
 // Service Tag
 export class MigratorService extends Context.Tag("MigratorService")<MigratorService, {
-  apply: () => Effect.Effect<ApplyResult>,
+  apply: () => Effect.Effect<ApplyResult, ZodError | PlatformError | UnknownException | EvolutionParseError>,
   resolve: (id: number) => Effect.Effect<ResolveResult, UnknownException>
 }>() { }
 
@@ -127,7 +129,7 @@ export const MigratorServiceLive = (options: MigratorOptions) => Layer.effect(
       )
     }
 
-    const apply = (): Effect.Effect<ApplyResult> => Effect.gen(function* () {
+    const apply = (): Effect.Effect<ApplyResult, UnknownException | ZodError | PlatformError | EvolutionParseError> => Effect.gen(function* () {
       yield* initialize()
 
       // TODO see if we can decompose this

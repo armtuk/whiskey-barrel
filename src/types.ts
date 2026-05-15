@@ -5,7 +5,7 @@ import { UnknownException } from "effect/Cause"
 
 // ── Domain Models ──────────────────────────────────────────────────────────────
 
-export const evolutionStates: Array<string> = ["applying_up", "applied", "applying_down"] as const
+export const evolutionStates = ["applying_up", "applied", "applying_down"] as const
 export type EvolutionState = typeof evolutionStates[number]
 
 export const evolutionState: Record<string, EvolutionState> = {
@@ -123,11 +123,19 @@ export interface ApplyFailureResult {
   evolutionRecord?: EvolutionRecord
 }
 
-export type ApplyResult = ApplySuccessResult | ApplyFailureResult
+export interface ApplyNoopResult {
+  _tag: "ApplyNoopResult"
+}
+
+export type ApplyResult = ApplySuccessResult | ApplyFailureResult | ApplyNoopResult
 
 export const applyResult = {
   success: (): ApplySuccessResult => ({ _tag: "ApplySuccessResult" }),
-  failure: (error: string, evolutionRecord?: EvolutionRecord): ApplyFailureResult => ({ _tag: "ApplyFailureResult", error, evolutionRecord })
+  /** Used when an evolution application fails. Yield the error and the evolution record that caused the error */
+  // TODO should this be Evolution not EvolutionRecord here?
+  failure: (error: string, evolutionRecord?: EvolutionRecord): ApplyFailureResult => ({ _tag: "ApplyFailureResult", error, evolutionRecord }),
+  /** Used when there was nothing to do - all evolution have previously been applied successfully and the database is in a consistent state */
+  noop: (): ApplyNoopResult => ({ _tag: "ApplyNoopResult" })
 }
 
 export interface RollbackSuccessResult {
@@ -206,5 +214,6 @@ export class divergedEvolution {
     if (divergedEvolution.isApplyUp(d)) return callback.onUp(d)
     if (divergedEvolution.isChangedHash(d)) return callback.onDownUp(d)
     if (divergedEvolution.isApplyDown(d)) return callback.onDown(d)
+    return Effect.succeed(applyResult.success())
   }
 }

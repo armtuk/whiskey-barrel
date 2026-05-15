@@ -176,4 +176,10 @@ describe("EvolutionFileService.fetchEvolutions()", () => {
 
     expect(result).toEqual([])
   })
+
+  it("Throws an error for non-sequential sql files", async () => {
+    // TODO implement
+    expect(1).toBe(1)
+  })
+
 })
