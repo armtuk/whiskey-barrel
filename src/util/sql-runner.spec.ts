@@ -4,9 +4,9 @@ import { Effect } from "effect"
 import type { Sql } from "postgres"
 import postgres from "postgres"
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest"
-import { fromBetterSqlite3 } from "../drivers/better-sqlite3.driver.js"
-import { fromPostgresJs as pgDriver } from "../drivers/postgres-js.driver.js"
-import { fromMigrationDriver } from "./sql-runner.js"
+import { fromBetterSqlite3 } from "../drivers/better-sqlite3.driver.ts"
+import { fromPostgresJs as pgDriver } from "../drivers/postgres-js.driver.ts"
+import { fromMigrationDriver } from "./sql-runner.ts"
 
 config({ path: ".env.local" })
 

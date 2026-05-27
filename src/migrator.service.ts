@@ -25,7 +25,7 @@ import {
   type StatusResult,
   type StatusStuckResult,
   type StatusSuccessResult
-} from "./types.js"
+} from "./types.ts"
 import { SqlRunner } from "./util/sql-runner.ts"
 import { zodParseEffect } from "./util/zodEffectUtil.ts"
 

@@ -2,8 +2,8 @@ import { config } from "dotenv"
 import type { Sql } from "postgres"
 import postgres from "postgres"
 import { afterAll, beforeAll, describe, expect, it } from "vitest"
-import type { MigrationDriver } from "./driver.types.js"
-import { fromPostgresJs } from "./postgres-js.driver.js"
+import type { MigrationDriver } from "./driver.types.ts"
+import { fromPostgresJs } from "./postgres-js.driver.ts"
 
 config({ path: ".env.local" })
 

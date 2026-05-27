@@ -1,5 +1,5 @@
 import type Database from "better-sqlite3"
-import type { MigrationDriver } from "./driver.types.js"
+import type { MigrationDriver } from "./driver.types.ts"
 
 export const fromBetterSqlite3 = (db: Database.Database): MigrationDriver => ({
   exec: async (sql: string, params: unknown[] = []): Promise<void> => {

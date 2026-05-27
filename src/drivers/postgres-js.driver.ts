@@ -1,5 +1,5 @@
 import type { Sql } from "postgres"
-import type { MigrationDriver } from "./driver.types.js"
+import type { MigrationDriver } from "./driver.types.ts"
 import { toPostgresParams } from "../util/sql-runner.ts"
 
 export const fromPostgresJs = (sql: Sql): MigrationDriver => ({

@@ -1,5 +1,5 @@
-import type { ConnectionConfig } from "../types.js"
-import type { MigrationDriver } from "./driver.types.js"
+import type { ConnectionConfig } from "../types.ts"
+import type { MigrationDriver } from "./driver.types.ts"
 import { fromMigrationDriver } from "../util/sql-runner.ts"
 
 export const createDriverFromConfig = async (config: ConnectionConfig): Promise<MigrationDriver> => {

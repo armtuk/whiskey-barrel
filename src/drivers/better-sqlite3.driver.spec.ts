@@ -1,6 +1,6 @@
 import Database from "better-sqlite3"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
-import { fromBetterSqlite3 } from "./better-sqlite3.driver.js"
+import { fromBetterSqlite3 } from "./better-sqlite3.driver.ts"
 
 let db: Database.Database
 

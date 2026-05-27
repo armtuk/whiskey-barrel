@@ -1,5 +1,5 @@
 import type { DatabaseSync } from "node:sqlite"
-import type { MigrationDriver } from "./driver.types.js"
+import type { MigrationDriver } from "./driver.types.ts"
 
 /** Requires Node.js >= 22.13. */
 export const fromNodeSqlite = (db: DatabaseSync): MigrationDriver => ({
