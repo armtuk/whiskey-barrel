@@ -1,0 +1,16 @@
+.idea
+
+node_modules
+dist
+coverage
+
+# AI config — never committed
+CLAUDE.md
+AGENTS.md
+.claude/
+.agents/
+claude-sessions/
+feature-planning.session.id
+
+# Environmental configurations
+.env.*
