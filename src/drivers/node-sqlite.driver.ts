@@ -3,8 +3,12 @@ import type { MigrationDriver } from "./driver.types.js"
 
 /** Requires Node.js >= 22.13. */
 export const fromNodeSqlite = (db: DatabaseSync): MigrationDriver => ({
-  exec: async (sql: string): Promise<void> => {
-    db.exec(sql)
+  exec: async (sql: string, params: unknown[] = []): Promise<void> => {
+    if (params.length === 0) {
+      db.exec(sql)
+    } else {
+      db.prepare(sql).run(...(params as Parameters<ReturnType<typeof db.prepare>["run"]>))
+    }
   },
   query: async <T = Record<string, unknown>>(sql: string, params: unknown[] = []): Promise<T[]> => {
     const stmt = db.prepare(sql)

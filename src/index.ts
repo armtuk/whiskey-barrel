@@ -6,11 +6,10 @@ export {
   EvolutionFileService,
   EvolutionFileServiceLive,
   FileLineReader,
-  FileLineReaderLive,
-  FileLineReaderSimple
+  FileLineReaderLive
 } from "./evolution-file.service.ts"
 export { MigratorService, MigratorServiceLive } from "./migrator.service.ts"
-export { fromBetterSqlite3, fromPostgresJs, SqlRunner, toPostgresParams } from "./util/sql-runner.ts"
+export { fromMigrationDriver, SqlRunner, toPostgresParams } from "./util/sql-runner.ts"
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -23,7 +22,6 @@ export type {
   DbType,
   DivergedEvolution,
   Evolution,
-  EvolutionLazy,
   EvolutionRecord,
   EvolutionState,
   MigratorOptions,
@@ -63,5 +61,5 @@ export {
 
 // ── Promise-based Driver Layer ────────────────────────────────────────────────
 
-export { createDriverFromConfig } from "./drivers/driver.factory.ts"
-export { MigrationDriver } from "./drivers/driver.types.ts"
+export { createDriverFromConfig, createSqlRunnerFromConfig } from "./drivers/driver.factory.ts"
+export type { MigrationDriver } from "./drivers/driver.types.ts"

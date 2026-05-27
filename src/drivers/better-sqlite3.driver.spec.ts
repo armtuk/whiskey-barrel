@@ -28,6 +28,15 @@ describe("fromBetterSqlite3", () => {
     expect(rows).toEqual([{ id: 1, name: "alpha" }])
   })
 
+  it("exec() runs parameterized single-statement DML", async () => {
+    const driver = fromBetterSqlite3(db)
+    await driver.exec("CREATE TABLE things (id INTEGER PRIMARY KEY, val TEXT)")
+    db.prepare("INSERT INTO things VALUES (1, 'old')").run()
+    await driver.exec("UPDATE things SET val = ? WHERE id = ?", ["new", 1])
+    const row = db.prepare("SELECT val FROM things WHERE id = 1").get() as { val: string }
+    expect(row.val).toBe("new")
+  })
+
   it("query() with no params returns all rows", async () => {
     const driver = fromBetterSqlite3(db)
     await driver.exec("CREATE TABLE nums (n INTEGER)")

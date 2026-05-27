@@ -1,4 +1,4 @@
-import { Data, Effect, type Stream } from "effect"
+import { Data, Effect } from "effect"
 import type { UnknownException } from "effect/Cause"
 import { z } from "zod"
 
@@ -24,12 +24,6 @@ export const evolutionValidator = z
   .strict()
 
 export type Evolution = z.infer<typeof evolutionValidator>
-
-export type EvolutionLazy = {
-  up: Stream.Stream<string>
-  down: Stream.Stream<string>
-  hash: (stream: Stream.Stream<string>) => Effect.Effect<string>
-}
 
 export const evolutionRecordValidator = z
   .object({

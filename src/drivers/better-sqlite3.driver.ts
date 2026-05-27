@@ -2,8 +2,12 @@ import type Database from "better-sqlite3"
 import type { MigrationDriver } from "./driver.types.js"
 
 export const fromBetterSqlite3 = (db: Database.Database): MigrationDriver => ({
-  exec: async (sql: string): Promise<void> => {
-    db.exec(sql)
+  exec: async (sql: string, params: unknown[] = []): Promise<void> => {
+    if (params.length === 0) {
+      db.exec(sql)
+    } else {
+      db.prepare(sql).run(...params)
+    }
   },
   query: async <T = Record<string, unknown>>(sql: string, params: unknown[] = []): Promise<T[]> => {
     const stmt = db.prepare(sql)

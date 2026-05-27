@@ -17,16 +17,6 @@
         "default": "./dist/index.cjs"
       }
     },
-    "./drivers/pg": {
-      "import": {
-        "types": "./dist/drivers/pg.driver.d.ts",
-        "default": "./dist/drivers/pg.driver.js"
-      },
-      "require": {
-        "types": "./dist/drivers/pg.driver.d.cts",
-        "default": "./dist/drivers/pg.driver.cjs"
-      }
-    },
     "./drivers/postgres-js": {
       "import": {
         "types": "./dist/drivers/postgres-js.driver.d.ts",

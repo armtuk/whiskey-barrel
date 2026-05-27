@@ -7,12 +7,11 @@ import { Effect, Layer } from "effect"
 import { createJiti } from "jiti"
 import type { ConnectionConfig, MigratorOptionsInput } from "../src/index.ts"
 import {
+  createSqlRunnerFromConfig,
   EvolutionFileParserLive,
   EvolutionFileServiceLive,
   EvolutionRepositoryLive,
   FileLineReaderLive,
-  fromBetterSqlite3,
-  fromPostgresJs,
   MigratorService,
   MigratorServiceLive,
   SqlRunner
@@ -59,24 +58,7 @@ const main = async (): Promise<void> => {
 
   const config = await loadConfig()
 
-  let sqlRunner: SqlRunner["Type"]
-  if (config.connection.type === "sqlite") {
-    const { default: Database } = await import("better-sqlite3")
-    sqlRunner = fromBetterSqlite3(new Database(config.connection.path))
-  } else {
-    const { default: postgres } = await import("postgres")
-    const sql = config.connection.connectionString
-      ? postgres(config.connection.connectionString)
-      : postgres({
-          host: config.connection.host,
-          port: config.connection.port,
-          database: config.connection.database,
-          username: config.connection.user,
-          password: config.connection.password,
-          ssl: config.connection.ssl ?? false
-        })
-    sqlRunner = fromPostgresJs(sql)
-  }
+  const sqlRunner = await createSqlRunnerFromConfig(config.connection)
 
   const ServiceLive = buildLayers(config, sqlRunner)
 
