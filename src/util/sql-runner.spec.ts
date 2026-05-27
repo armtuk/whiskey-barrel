@@ -1,8 +1,8 @@
-import { config } from "dotenv"
 import Database from "better-sqlite3"
+import { config } from "dotenv"
 import { Effect, Stream } from "effect"
-import postgres from "postgres"
 import type { Sql } from "postgres"
+import postgres from "postgres"
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest"
 import { fromBetterSqlite3, fromPostgresJs } from "./sql-runner.js"
 
@@ -26,9 +26,7 @@ describe("SqlRunner.fromBetterSqlite3", () => {
   it("binds parameters for exec()", async () => {
     const runner = fromBetterSqlite3(db)
 
-    await Effect.runPromise(
-      runner.exec("UPDATE items SET name = ? WHERE id = ?", ["delta", 2])
-    )
+    await Effect.runPromise(runner.exec("UPDATE items SET name = ? WHERE id = ?", ["delta", 2]))
 
     const row = db.prepare("SELECT name FROM items WHERE id = 2").get() as { name: string }
     expect(row.name).toBe("delta")
@@ -38,10 +36,7 @@ describe("SqlRunner.fromBetterSqlite3", () => {
     const runner = fromBetterSqlite3(db)
 
     const rows = await Effect.runPromise(
-      runner.query<{ id: number; name: string }>(
-        "SELECT id, name FROM items WHERE active = ? AND name = ?",
-        [1, "alpha"]
-      )
+      runner.query<{ id: number; name: string }>("SELECT id, name FROM items WHERE active = ? AND name = ?", [1, "alpha"])
     )
 
     expect(rows).toEqual([{ id: 1, name: "alpha" }])
@@ -52,10 +47,7 @@ describe("SqlRunner.fromBetterSqlite3", () => {
 
     const rows = await Effect.runPromise(
       Stream.runCollect(
-        runner.queryStream<{ id: number; name: string }>(
-          "SELECT id, name FROM items WHERE active = ? ORDER BY id",
-          [1]
-        )
+        runner.queryStream<{ id: number; name: string }>("SELECT id, name FROM items WHERE active = ? ORDER BY id", [1])
       ).pipe(Effect.map(chunk => Array.from(chunk)))
     )
 
@@ -111,9 +103,7 @@ describe("SqlRunner.fromPostgresJs", () => {
   it("binds parameters for exec()", async () => {
     const runner = fromPostgresJs(sql)
 
-    await Effect.runPromise(
-      runner.exec(`UPDATE ${PG_TEST_TABLE} SET name = ? WHERE id = ?`, ["delta", 2])
-    )
+    await Effect.runPromise(runner.exec(`UPDATE ${PG_TEST_TABLE} SET name = ? WHERE id = ?`, ["delta", 2]))
 
     const rows = await sql`SELECT name FROM ${sql(PG_TEST_TABLE)} WHERE id = 2`
     expect(rows[0].name).toBe("delta")
@@ -123,10 +113,7 @@ describe("SqlRunner.fromPostgresJs", () => {
     const runner = fromPostgresJs(sql)
 
     const rows = await Effect.runPromise(
-      runner.query<{ id: number; name: string }>(
-        `SELECT id, name FROM ${PG_TEST_TABLE} WHERE active = ? AND name = ?`,
-        [true, "alpha"]
-      )
+      runner.query<{ id: number; name: string }>(`SELECT id, name FROM ${PG_TEST_TABLE} WHERE active = ? AND name = ?`, [true, "alpha"])
     )
 
     expect(rows).toEqual([{ id: 1, name: "alpha" }])
@@ -137,10 +124,7 @@ describe("SqlRunner.fromPostgresJs", () => {
 
     const rows = await Effect.runPromise(
       Stream.runCollect(
-        runner.queryStream<{ id: number; name: string }>(
-          `SELECT id, name FROM ${PG_TEST_TABLE} WHERE active = ? ORDER BY id`,
-          [true]
-        )
+        runner.queryStream<{ id: number; name: string }>(`SELECT id, name FROM ${PG_TEST_TABLE} WHERE active = ? ORDER BY id`, [true])
       ).pipe(Effect.map(chunk => Array.from(chunk)))
     )
 

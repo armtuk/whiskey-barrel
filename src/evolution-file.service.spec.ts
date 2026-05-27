@@ -1,11 +1,10 @@
-import { mkdirSync, writeFileSync } from "node:fs"
-import { readFileSync } from "node:fs"
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { afterEach, describe, expect, it } from "vitest"
 import { Effect, Layer, Stream } from "effect"
-import { EvolutionFileService, EvolutionFileServiceLive, FileLineReader } from "./evolution-file.service.ts"
+import { afterEach, describe, expect, it } from "vitest"
 import { EvolutionFileParserLive } from "./evolution.parser.ts"
+import { EvolutionFileService, EvolutionFileServiceLive, FileLineReader } from "./evolution-file.service.ts"
 import type { MigratorOptions } from "./types.ts"
 
 // ── Fixtures ───────────────────────────────────────────────────────────────────
@@ -17,18 +16,11 @@ const SQL_2 = "-- #### !Ups\nCREATE TABLE posts (id INTEGER PRIMARY KEY, title T
 
 const createTestLayer = (options: MigratorOptions) => {
   const FileLineReaderLive = Layer.succeed(FileLineReader, {
-    lineStreamFromFile: (path: string) =>
-      Effect.sync(() =>
-        Stream.fromIterable(readFileSync(path, "utf-8").split("\n"))
-      ),
-    linesFromFile: (path: string) =>
-      Effect.sync(() => readFileSync(path, "utf-8").split("\n"))
+    lineStreamFromFile: (path: string) => Effect.sync(() => Stream.fromIterable(readFileSync(path, "utf-8").split("\n"))),
+    linesFromFile: (path: string) => Effect.sync(() => readFileSync(path, "utf-8").split("\n"))
   })
 
-  return EvolutionFileServiceLive(options).pipe(
-    Layer.provide(EvolutionFileParserLive()),
-    Layer.provide(FileLineReaderLive)
-  )
+  return EvolutionFileServiceLive(options).pipe(Layer.provide(EvolutionFileParserLive()), Layer.provide(FileLineReaderLive))
 }
 
 // ── Tests ──────────────────────────────────────────────────────────────────────
@@ -181,5 +173,4 @@ describe("EvolutionFileService.fetchEvolutions()", () => {
     // TODO implement
     expect(1).toBe(1)
   })
-
 })

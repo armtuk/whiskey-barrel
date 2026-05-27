@@ -2,15 +2,14 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import Database from "better-sqlite3"
-import { afterEach, beforeEach, describe, expect, it } from "vitest"
 import { Effect, Layer, Stream } from "effect"
-import { MigratorService, MigratorServiceLive } from "./migrator.service.js"
-import { SqlRunner } from "./util/sql-runner.js"
-import { fromBetterSqlite3 } from "./util/sql-runner.js"
+import { afterEach, beforeEach, describe, expect, it } from "vitest"
+import { EvolutionFileParserLive } from "./evolution.parser.js"
 import { EvolutionRepositoryLive } from "./evolution.repository.js"
 import { EvolutionFileServiceLive, FileLineReader } from "./evolution-file.service.ts"
-import { EvolutionFileParserLive } from "./evolution.parser.js"
+import { MigratorService, MigratorServiceLive } from "./migrator.service.js"
 import type { MigratorOptions } from "./types.js"
+import { fromBetterSqlite3, SqlRunner } from "./util/sql-runner.js"
 
 // ── Fixtures ───────────────────────────────────────────────────────────────────
 
@@ -45,17 +44,11 @@ const createTestEnv = (): TestEnv => {
   const SqlRunnerLive = Layer.succeed(SqlRunner, fromBetterSqlite3(db))
 
   const FileLineReaderLive = Layer.succeed(FileLineReader, {
-    lineStreamFromFile: (path: string) =>
-      Effect.sync(() =>
-        Stream.fromIterable(readFileSync(path, "utf-8").split("\n"))
-      ),
-    linesFromFile: (path: string) =>
-      Effect.sync(() => readFileSync(path, "utf-8").split("\n"))
+    lineStreamFromFile: (path: string) => Effect.sync(() => Stream.fromIterable(readFileSync(path, "utf-8").split("\n"))),
+    linesFromFile: (path: string) => Effect.sync(() => readFileSync(path, "utf-8").split("\n"))
   })
 
-  const RepoLive = EvolutionRepositoryLive(options.tableName).pipe(
-    Layer.provide(SqlRunnerLive)
-  )
+  const RepoLive = EvolutionRepositoryLive(options.tableName).pipe(Layer.provide(SqlRunnerLive))
 
   const FileServiceLive = EvolutionFileServiceLive(options).pipe(
     Layer.provide(EvolutionFileParserLive()),
@@ -64,12 +57,9 @@ const createTestEnv = (): TestEnv => {
 
   const DepsLive = Layer.mergeAll(SqlRunnerLive, RepoLive, FileServiceLive)
 
-  const ServiceLive = MigratorServiceLive(options).pipe(
-    Layer.provide(DepsLive)
-  )
+  const ServiceLive = MigratorServiceLive(options).pipe(Layer.provide(DepsLive))
 
-  const run = <A, E>(effect: Effect.Effect<A, E, MigratorService>): Promise<A> =>
-    Effect.runPromise(Effect.provide(effect, ServiceLive))
+  const run = <A, E>(effect: Effect.Effect<A, E, MigratorService>): Promise<A> => Effect.runPromise(Effect.provide(effect, ServiceLive))
 
   const writeFile = (name: string, content: string) => {
     writeFileSync(join(dbDir, name), content)
@@ -98,9 +88,7 @@ describe("MigratorService.apply()", () => {
     env.writeFile("2.sql", SQL_2)
     env.writeFile("3.sql", SQL_3)
 
-    const result = await env.run(
-      Effect.flatMap(MigratorService, svc => svc.apply())
-    )
+    const result = await env.run(Effect.flatMap(MigratorService, svc => svc.apply()))
 
     expect(result._tag).toBe("ApplySuccessResult")
     expect(countRows(env.db, "db_evolutions")).toBe(3)
@@ -155,12 +143,8 @@ describe("MigratorService.apply()", () => {
 
     const SqlRunnerLayer = Layer.succeed(SqlRunner, fromBetterSqlite3(customDb))
     const FileLineReaderLayer = Layer.succeed(FileLineReader, {
-      lineStreamFromFile: (path: string) =>
-        Effect.sync(() =>
-          Stream.fromIterable(readFileSync(path, "utf-8").split("\n"))
-        ),
-      linesFromFile: (path: string) =>
-        Effect.sync(() => readFileSync(path, "utf-8").split("\n"))
+      lineStreamFromFile: (path: string) => Effect.sync(() => Stream.fromIterable(readFileSync(path, "utf-8").split("\n"))),
+      linesFromFile: (path: string) => Effect.sync(() => readFileSync(path, "utf-8").split("\n"))
     })
     const RepoLayer = EvolutionRepositoryLive("my_migrations").pipe(Layer.provide(SqlRunnerLayer))
     const FileServiceLayer = EvolutionFileServiceLive(customOptions).pipe(
@@ -168,9 +152,7 @@ describe("MigratorService.apply()", () => {
       Layer.provide(FileLineReaderLayer)
     )
     const DepsLayer = Layer.mergeAll(SqlRunnerLayer, RepoLayer, FileServiceLayer)
-    const ServiceLayer = MigratorServiceLive(customOptions).pipe(
-      Layer.provide(DepsLayer)
-    )
+    const ServiceLayer = MigratorServiceLive(customOptions).pipe(Layer.provide(DepsLayer))
 
     const result = await Effect.runPromise(
       Effect.provide(

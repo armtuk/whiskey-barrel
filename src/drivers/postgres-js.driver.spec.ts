@@ -1,9 +1,9 @@
 import { config } from "dotenv"
-import { afterAll, beforeAll, describe, expect, it } from "vitest"
-import postgres from "postgres"
 import type { Sql } from "postgres"
-import { fromPostgresJs } from "./postgres-js.driver.js"
+import postgres from "postgres"
+import { afterAll, beforeAll, describe, expect, it } from "vitest"
 import type { MigrationDriver } from "./driver.types.js"
+import { fromPostgresJs } from "./postgres-js.driver.js"
 
 config({ path: ".env.local" })
 
@@ -63,10 +63,7 @@ describe("postgres-js driver", () => {
   })
 
   it("query binds driver-style ? parameters in order", async () => {
-    const rows = await driver.query<{ id: number; name: string }>(
-      `SELECT * FROM ${TEST_TABLE} WHERE id = ? AND name = ?`,
-      [1, "alice"]
-    )
+    const rows = await driver.query<{ id: number; name: string }>(`SELECT * FROM ${TEST_TABLE} WHERE id = ? AND name = ?`, [1, "alice"])
 
     expect(rows).toHaveLength(1)
     expect(rows[0].id).toBe(1)
@@ -74,10 +71,7 @@ describe("postgres-js driver", () => {
   })
 
   it("query returns parameterized results", async () => {
-    const rows = await driver.query<{ id: number; name: string }>(
-      `SELECT * FROM ${TEST_TABLE} WHERE name = ?`,
-      ["alice"]
-    )
+    const rows = await driver.query<{ id: number; name: string }>(`SELECT * FROM ${TEST_TABLE} WHERE name = ?`, ["alice"])
 
     expect(rows).toHaveLength(1)
     expect(rows[0].id).toBe(1)
@@ -85,10 +79,7 @@ describe("postgres-js driver", () => {
   })
 
   it("query returns empty array when no matches", async () => {
-    const rows = await driver.query(
-      `SELECT * FROM ${TEST_TABLE} WHERE name = ?`,
-      ["nobody"]
-    )
+    const rows = await driver.query(`SELECT * FROM ${TEST_TABLE} WHERE name = ?`, ["nobody"])
 
     expect(rows).toEqual([])
   })

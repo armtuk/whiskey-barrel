@@ -1,6 +1,6 @@
 import type { Sql } from "postgres"
-import type { MigrationDriver } from "./driver.types.js"
 import { toPostgresParams } from "../util/sql-runner.ts"
+import type { MigrationDriver } from "./driver.types.js"
 
 export const fromPostgresJs = (sql: Sql): MigrationDriver => ({
   exec: async (s: string): Promise<void> => {

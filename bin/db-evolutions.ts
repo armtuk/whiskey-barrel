@@ -1,21 +1,22 @@
 #!/usr/bin/env node
+
 // biome-ignore-all lint/suspicious/noConsole: CLI entrypoint uses console for user output
 
-import { createJiti } from "jiti"
-import { Effect, Layer } from "effect"
 import { NodeFileSystem } from "@effect/platform-node"
+import { Effect, Layer } from "effect"
+import { createJiti } from "jiti"
+import type { ConnectionConfig, MigratorOptionsInput } from "../src/index.ts"
 import {
+  EvolutionFileParserLive,
+  EvolutionFileServiceLive,
+  EvolutionRepositoryLive,
+  FileLineReaderLive,
+  fromBetterSqlite3,
+  fromPostgresJs,
   MigratorService,
   MigratorServiceLive,
-  EvolutionFileServiceLive,
-  EvolutionFileParserLive,
-  FileLineReaderLive,
-  EvolutionRepositoryLive,
-  SqlRunner,
-  fromBetterSqlite3,
-  fromPostgresJs
+  SqlRunner
 } from "../src/index.ts"
-import type { MigratorOptionsInput, ConnectionConfig } from "../src/index.ts"
 import { migratorOptionsValidator } from "../src/types.ts"
 
 interface EvolutionsConfig {

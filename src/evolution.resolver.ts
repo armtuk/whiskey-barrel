@@ -1,6 +1,6 @@
-import { Effect } from "effect"
 import { existsSync, readdirSync } from "node:fs"
 import { join } from "node:path"
+import { Effect } from "effect"
 import type { UnknownException } from "effect/Cause"
 
 // ── Types ──────────────────────────────────────────────────────────────────────
@@ -12,7 +12,11 @@ export interface EvolutionFileRef {
 
 // ── Public API ─────────────────────────────────────────────────────────────────
 
-export const resolveEvolutionFiles = (evolutionsRoot: string, dbName: string, dbType?: string): Effect.Effect<EvolutionFileRef[], UnknownException, never> => {
+export const resolveEvolutionFiles = (
+  evolutionsRoot: string,
+  dbName: string,
+  dbType?: string
+): Effect.Effect<EvolutionFileRef[], UnknownException, never> => {
   const dir = resolveDirectory(evolutionsRoot, dbName, dbType)
   if (!existsSync(dir)) return Effect.succeed([])
 

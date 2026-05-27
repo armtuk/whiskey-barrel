@@ -1,35 +1,32 @@
-import { Context, Effect, Stream } from "effect"
-import type { Sql as PgSql } from "postgres"
 import type Database from "better-sqlite3"
+import { Context, Effect, Stream } from "effect"
 import type { UnknownException } from "effect/Cause"
+import type { Sql as PgSql } from "postgres"
 
-export class SqlRunner extends Context.Tag("SqlRunner")<SqlRunner, {
-  exec(s: string, params?: unknown[]): Effect.Effect<void, UnknownException, never>
-  query<T>(s: string, params?: unknown[]): Effect.Effect<T[], UnknownException, never>
-  queryStream<T>(s: string, params?: unknown[]): Stream.Stream<T, UnknownException, never>
-}>() { }
+export class SqlRunner extends Context.Tag("SqlRunner")<
+  SqlRunner,
+  {
+    exec(s: string, params?: unknown[]): Effect.Effect<void, UnknownException, never>
+    query<T>(s: string, params?: unknown[]): Effect.Effect<T[], UnknownException, never>
+    queryStream<T>(s: string, params?: unknown[]): Stream.Stream<T, UnknownException, never>
+  }
+>() {}
 
 export const fromPostgresJs = (sql: PgSql) => ({
   exec(s: string, params?: unknown[]): Effect.Effect<void, UnknownException, never> {
     const query = params && params.length > 0 ? toPostgresParams(s) : s
-    return Effect.tryPromise(() =>
-      sql.unsafe(query, params as Parameters<typeof sql.unsafe>[1])
-    )
+    return Effect.tryPromise(() => sql.unsafe(query, params as Parameters<typeof sql.unsafe>[1]))
   },
 
   query<T = Record<string, unknown>>(s: string, params: unknown[] = []): Effect.Effect<T[], UnknownException, never> {
     const query = params.length === 0 ? s : toPostgresParams(s)
-    return Effect.tryPromise(() =>
-      sql.unsafe(query, params as Parameters<typeof sql.unsafe>[1]) as Promise<T[]>
-    )
+    return Effect.tryPromise(() => sql.unsafe(query, params as Parameters<typeof sql.unsafe>[1]) as Promise<T[]>)
   },
 
   queryStream<T = Record<string, unknown>>(s: string, params: unknown[] = []): Stream.Stream<T, UnknownException, never> {
     const query = params.length === 0 ? s : toPostgresParams(s)
     return Stream.fromIterableEffect(
-      Effect.tryPromise<T[]>(() =>
-        sql.unsafe(query, params as Parameters<typeof sql.unsafe>[1]) as Promise<T[]>
-      )
+      Effect.tryPromise<T[]>(() => sql.unsafe(query, params as Parameters<typeof sql.unsafe>[1]) as Promise<T[]>)
     )
   }
 })

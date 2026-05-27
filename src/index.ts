@@ -1,6 +1,7 @@
 // ── Effect Services ───────────────────────────────────────────────────────────
 
-export { MigratorService, MigratorServiceLive } from "./migrator.service.ts"
+export { EvolutionFileParser, EvolutionFileParserLive, EvolutionParseError } from "./evolution.parser.ts"
+export { EvolutionRepository, EvolutionRepositoryLive } from "./evolution.repository.ts"
 export {
   EvolutionFileService,
   EvolutionFileServiceLive,
@@ -8,60 +9,59 @@ export {
   FileLineReaderLive,
   FileLineReaderSimple
 } from "./evolution-file.service.ts"
-export { EvolutionFileParser, EvolutionFileParserLive, EvolutionParseError } from "./evolution.parser.ts"
-export { EvolutionRepository, EvolutionRepositoryLive } from "./evolution.repository.ts"
-export { SqlRunner, fromBetterSqlite3, fromPostgresJs, toPostgresParams } from "./util/sql-runner.ts"
+export { MigratorService, MigratorServiceLive } from "./migrator.service.ts"
+export { fromBetterSqlite3, fromPostgresJs, SqlRunner, toPostgresParams } from "./util/sql-runner.ts"
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 export type {
-  Evolution,
-  EvolutionRecord,
-  EvolutionState,
-  EvolutionLazy,
-  DbType,
-  MigratorOptions,
-  MigratorOptionsInput,
-  ConnectionConfig,
-  PostgresqlConnectionConfig,
-  SqliteConnectionConfig,
-  StatusResult,
-  StatusSuccessResult,
-  StatusStuckResult,
-  StatusFailureResult,
-  ApplyResult,
-  ApplySuccessResult,
   ApplyFailureResult,
   ApplyNoopResult,
-  RollbackResult,
-  RollbackSuccessResult,
-  RollbackFailureResult,
+  ApplyResult,
+  ApplySuccessResult,
+  ConnectionConfig,
+  DbType,
+  DivergedEvolution,
+  Evolution,
+  EvolutionLazy,
+  EvolutionRecord,
+  EvolutionState,
+  MigratorOptions,
+  MigratorOptionsInput,
+  PostgresqlConnectionConfig,
+  ResolveFailureResult,
   ResolveResult,
   ResolveSuccessResult,
-  ResolveFailureResult,
-  DivergedEvolution
+  RollbackFailureResult,
+  RollbackResult,
+  RollbackSuccessResult,
+  SqliteConnectionConfig,
+  StatusFailureResult,
+  StatusResult,
+  StatusStuckResult,
+  StatusSuccessResult
 } from "./types.ts"
 
 export {
-  defineConfig,
   applyResult,
-  resolveResult,
-  evolutionValidator,
-  evolutionRecordValidator,
-  evolutionStateValidator,
-  migratorOptionsValidator,
   connectionConfigValidator,
-  dbTypes,
   dbType,
-  evolutionStates,
+  dbTypes,
+  defineConfig,
+  divergedEvolution,
+  evolutionRecordValidator,
   evolutionState,
+  evolutionStates,
+  evolutionStateValidator,
+  evolutionValidator,
   InconsistentDatabaseError,
   InitializationError,
+  migratorOptionsValidator,
   NotFoundError,
-  divergedEvolution
+  resolveResult
 } from "./types.ts"
 
 // ── Promise-based Driver Layer ────────────────────────────────────────────────
 
-export { MigrationDriver } from "./drivers/driver.types.ts"
 export { createDriverFromConfig } from "./drivers/driver.factory.ts"
+export { MigrationDriver } from "./drivers/driver.types.ts"
