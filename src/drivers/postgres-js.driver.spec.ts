@@ -62,6 +62,19 @@ describe("postgres-js driver", () => {
     expect(rows).toHaveLength(2)
   })
 
+  it("exec binds driver-style ? parameters", async () => {
+    await driver.exec(
+      `INSERT INTO ${TEST_TABLE} (id, name) VALUES (?, ?)`,
+      [99, "parameterized"]
+    )
+
+    const rows = await sql`SELECT name FROM ${sql(TEST_TABLE)} WHERE id = 99`
+    expect(rows).toHaveLength(1)
+    expect(rows[0].name).toBe("parameterized")
+
+    await sql`DELETE FROM ${sql(TEST_TABLE)} WHERE id = 99`
+  })
+
   it("query binds driver-style ? parameters in order", async () => {
     const rows = await driver.query<{ id: number; name: string }>(
       `SELECT * FROM ${TEST_TABLE} WHERE id = ? AND name = ?`,

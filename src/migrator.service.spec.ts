@@ -3,10 +3,11 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import Database from "better-sqlite3"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
-import { Effect, Layer, Stream } from "effect"
+import { Effect, Layer } from "effect"
 import { MigratorService, MigratorServiceLive } from "./migrator.service.js"
 import { SqlRunner } from "./util/sql-runner.js"
-import { fromBetterSqlite3 } from "./util/sql-runner.js"
+import { fromMigrationDriver } from "./util/sql-runner.js"
+import { fromBetterSqlite3 } from "./drivers/better-sqlite3.driver.js"
 import { EvolutionRepositoryLive } from "./evolution.repository.js"
 import { EvolutionFileServiceLive, FileLineReader } from "./evolution-file.service.ts"
 import { EvolutionFileParserLive } from "./evolution.parser.js"
@@ -42,13 +43,9 @@ const createTestEnv = (): TestEnv => {
     tableName: "db_evolutions"
   }
 
-  const SqlRunnerLive = Layer.succeed(SqlRunner, fromBetterSqlite3(db))
+  const SqlRunnerLive = Layer.succeed(SqlRunner, fromMigrationDriver(fromBetterSqlite3(db)))
 
   const FileLineReaderLive = Layer.succeed(FileLineReader, {
-    lineStreamFromFile: (path: string) =>
-      Effect.sync(() =>
-        Stream.fromIterable(readFileSync(path, "utf-8").split("\n"))
-      ),
     linesFromFile: (path: string) =>
       Effect.sync(() => readFileSync(path, "utf-8").split("\n"))
   })
@@ -153,12 +150,8 @@ describe("MigratorService.apply()", () => {
       tableName: "my_migrations"
     }
 
-    const SqlRunnerLayer = Layer.succeed(SqlRunner, fromBetterSqlite3(customDb))
+    const SqlRunnerLayer = Layer.succeed(SqlRunner, fromMigrationDriver(fromBetterSqlite3(customDb)))
     const FileLineReaderLayer = Layer.succeed(FileLineReader, {
-      lineStreamFromFile: (path: string) =>
-        Effect.sync(() =>
-          Stream.fromIterable(readFileSync(path, "utf-8").split("\n"))
-        ),
       linesFromFile: (path: string) =>
         Effect.sync(() => readFileSync(path, "utf-8").split("\n"))
     })

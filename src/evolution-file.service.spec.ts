@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, describe, expect, it } from "vitest"
-import { Effect, Layer, Stream } from "effect"
+import { Effect, Layer } from "effect"
 import { EvolutionFileService, EvolutionFileServiceLive, FileLineReader } from "./evolution-file.service.ts"
 import { EvolutionFileParserLive } from "./evolution.parser.ts"
 import type { MigratorOptions } from "./types.ts"
@@ -17,10 +17,6 @@ const SQL_2 = "-- #### !Ups\nCREATE TABLE posts (id INTEGER PRIMARY KEY, title T
 
 const createTestLayer = (options: MigratorOptions) => {
   const FileLineReaderLive = Layer.succeed(FileLineReader, {
-    lineStreamFromFile: (path: string) =>
-      Effect.sync(() =>
-        Stream.fromIterable(readFileSync(path, "utf-8").split("\n"))
-      ),
     linesFromFile: (path: string) =>
       Effect.sync(() => readFileSync(path, "utf-8").split("\n"))
   })

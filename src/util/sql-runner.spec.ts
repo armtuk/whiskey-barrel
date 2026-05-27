@@ -1,16 +1,18 @@
 import { config } from "dotenv"
 import Database from "better-sqlite3"
-import { Effect, Stream } from "effect"
+import { Effect } from "effect"
 import postgres from "postgres"
 import type { Sql } from "postgres"
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest"
-import { fromBetterSqlite3, fromPostgresJs } from "./sql-runner.js"
+import { fromMigrationDriver } from "./sql-runner.js"
+import { fromBetterSqlite3 } from "../drivers/better-sqlite3.driver.js"
+import { fromPostgresJs as pgDriver } from "../drivers/postgres-js.driver.js"
 
 config({ path: ".env.local" })
 
 const PG_TEST_TABLE = "pg_sql_runner_test_items"
 
-describe("SqlRunner.fromBetterSqlite3", () => {
+describe("fromMigrationDriver (better-sqlite3)", () => {
   let db: Database.Database
 
   beforeEach(() => {
@@ -24,7 +26,7 @@ describe("SqlRunner.fromBetterSqlite3", () => {
   })
 
   it("binds parameters for exec()", async () => {
-    const runner = fromBetterSqlite3(db)
+    const runner = fromMigrationDriver(fromBetterSqlite3(db))
 
     await Effect.runPromise(
       runner.exec("UPDATE items SET name = ? WHERE id = ?", ["delta", 2])
@@ -34,8 +36,20 @@ describe("SqlRunner.fromBetterSqlite3", () => {
     expect(row.name).toBe("delta")
   })
 
+  it("exec() handles multi-statement DDL without params", async () => {
+    const runner = fromMigrationDriver(fromBetterSqlite3(db))
+
+    await Effect.runPromise(
+      runner.exec("CREATE TABLE a (id INTEGER PRIMARY KEY); CREATE TABLE b (id INTEGER PRIMARY KEY);")
+    )
+
+    const tables = db.prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name").all() as { name: string }[]
+    expect(tables.map(t => t.name)).toContain("a")
+    expect(tables.map(t => t.name)).toContain("b")
+  })
+
   it("binds parameters for query() in order", async () => {
-    const runner = fromBetterSqlite3(db)
+    const runner = fromMigrationDriver(fromBetterSqlite3(db))
 
     const rows = await Effect.runPromise(
       runner.query<{ id: number; name: string }>(
@@ -46,27 +60,9 @@ describe("SqlRunner.fromBetterSqlite3", () => {
 
     expect(rows).toEqual([{ id: 1, name: "alpha" }])
   })
-
-  it("binds parameters for queryStream()", async () => {
-    const runner = fromBetterSqlite3(db)
-
-    const rows = await Effect.runPromise(
-      Stream.runCollect(
-        runner.queryStream<{ id: number; name: string }>(
-          "SELECT id, name FROM items WHERE active = ? ORDER BY id",
-          [1]
-        )
-      ).pipe(Effect.map(chunk => Array.from(chunk)))
-    )
-
-    expect(rows).toEqual([
-      { id: 1, name: "alpha" },
-      { id: 3, name: "gamma" }
-    ])
-  })
 })
 
-describe("SqlRunner.fromPostgresJs", () => {
+describe("fromMigrationDriver (postgres-js)", () => {
   let sql: Sql
 
   beforeAll(async () => {
@@ -109,7 +105,7 @@ describe("SqlRunner.fromPostgresJs", () => {
   })
 
   it("binds parameters for exec()", async () => {
-    const runner = fromPostgresJs(sql)
+    const runner = fromMigrationDriver(pgDriver(sql))
 
     await Effect.runPromise(
       runner.exec(`UPDATE ${PG_TEST_TABLE} SET name = ? WHERE id = ?`, ["delta", 2])
@@ -120,7 +116,7 @@ describe("SqlRunner.fromPostgresJs", () => {
   })
 
   it("binds parameters for query() in order", async () => {
-    const runner = fromPostgresJs(sql)
+    const runner = fromMigrationDriver(pgDriver(sql))
 
     const rows = await Effect.runPromise(
       runner.query<{ id: number; name: string }>(
@@ -130,23 +126,5 @@ describe("SqlRunner.fromPostgresJs", () => {
     )
 
     expect(rows).toEqual([{ id: 1, name: "alpha" }])
-  })
-
-  it("binds parameters for queryStream()", async () => {
-    const runner = fromPostgresJs(sql)
-
-    const rows = await Effect.runPromise(
-      Stream.runCollect(
-        runner.queryStream<{ id: number; name: string }>(
-          `SELECT id, name FROM ${PG_TEST_TABLE} WHERE active = ? ORDER BY id`,
-          [true]
-        )
-      ).pipe(Effect.map(chunk => Array.from(chunk)))
-    )
-
-    expect(rows).toEqual([
-      { id: 1, name: "alpha" },
-      { id: 3, name: "gamma" }
-    ])
   })
 })

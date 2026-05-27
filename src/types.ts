@@ -1,5 +1,5 @@
 import { z } from "zod"
-import { type Stream, Data, Effect } from "effect"
+import { Data, Effect } from "effect"
 import type { UnknownException } from "effect/Cause"
 
 // ── Domain Models ──────────────────────────────────────────────────────────────
@@ -22,12 +22,6 @@ export const evolutionValidator = z.object({
 }).strict()
 
 export type Evolution = z.infer<typeof evolutionValidator>
-
-export type EvolutionLazy = {
-  up: Stream.Stream<string>
-  down: Stream.Stream<string>
-  hash: (stream: Stream.Stream<string>) => Effect.Effect<string>
-}
 
 export const evolutionRecordValidator = z.object({
   id: z.number().int().positive(),

@@ -1,5 +1,6 @@
 import type { ConnectionConfig } from "../types.js"
 import type { MigrationDriver } from "./driver.types.js"
+import { fromMigrationDriver } from "../util/sql-runner.ts"
 
 export const createDriverFromConfig = async (config: ConnectionConfig): Promise<MigrationDriver> => {
   switch (config.type) {
@@ -8,6 +9,11 @@ export const createDriverFromConfig = async (config: ConnectionConfig): Promise<
     case "postgresql":
       return createPostgresqlDriver(config)
   }
+}
+
+export const createSqlRunnerFromConfig = async (config: ConnectionConfig) => {
+  const driver = await createDriverFromConfig(config)
+  return fromMigrationDriver(driver)
 }
 
 const createSqliteDriver = async (path: string): Promise<MigrationDriver> => {

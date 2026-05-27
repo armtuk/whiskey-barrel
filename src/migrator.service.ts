@@ -1,4 +1,3 @@
-import type { MigrationDriver } from "./drivers/driver.types.js"
 import { EvolutionFileService } from "./evolution-file.service.ts"
 import {
   type ApplyResult,
@@ -98,10 +97,8 @@ export const MigratorServiceLive = (options: MigratorOptions) => Layer.effect(
     }
 
     const fetchAllRecords = (): Effect.Effect<EvolutionRecord[], UnknownException | ZodError, never> =>
-      sqlRunner.queryStream(`SELECT * FROM ${options.tableName} ORDER BY id`).pipe(
-        Stream.mapEffect(zodParseEffect(evolutionRecordValidator)),
-        Stream.runCollect,
-        Effect.map(chunk => Array.from(chunk))
+      sqlRunner.query<unknown>(`SELECT * FROM ${options.tableName} ORDER BY id`).pipe(
+        Effect.flatMap(rows => Effect.forEach(rows, zodParseEffect(evolutionRecordValidator)))
       )
 
     const applyDownToDiverged = (diverged: DivergedEvolution, files: Evolution[], records: EvolutionRecord[]): Effect.Effect<ApplyResult, UnknownException> => {

@@ -1,4 +1,4 @@
-import { Context, Effect, Layer, Stream, pipe, Scope } from "effect"
+import { Context, Effect, Layer } from "effect"
 import { FileSystem } from "@effect/platform"
 
 import { resolveEvolutionFiles } from "./evolution.resolver.ts"
@@ -9,7 +9,6 @@ import type { PlatformError } from "@effect/platform/Error"
 import type { UnknownException } from "effect/Cause"
 
 export class FileLineReader extends Context.Tag("FileLineReader")<FileLineReader, {
-  lineStreamFromFile(path: string): Effect.Effect<Stream.Stream<string, PlatformError>, PlatformError>
   linesFromFile(path: string): Effect.Effect<string[], PlatformError, never>
 }>() { }
 
@@ -18,35 +17,9 @@ export const FileLineReaderLive = Layer.effect(
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem
     return {
-      lineStreamFromFile: (path: string) =>
-        fs.access(path).pipe(
-          Effect.map(() =>
-            fs.stream(path).pipe(
-              Stream.decodeText(),
-              Stream.splitLines
-            )
-          )
-        ),
       linesFromFile: (path: string) => fs.readFileString(path).pipe(
         Effect.map(content => content.split("\n"))
       )
-    }
-  })
-)
-
-export const FileLineReaderSimple = Layer.effect(
-  FileLineReader,
-  Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem
-    return {
-      lineStreamFromFile: (path: string) =>
-        fs.readFileString(path).pipe(
-          Effect.map(content => Stream.fromIterable(content.split("\n")))
-        ),
-      linesFromFile: (path: string) =>
-        fs.readFileString(path).pipe(
-          Effect.map(content => content.split("\n"))
-        )
     }
   })
 )
