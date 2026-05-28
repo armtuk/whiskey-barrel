@@ -43,8 +43,7 @@ export const EvolutionRepositoryLive = (tableName: string) =>
           ]),
         startDevolution: (r: Evolution | EvolutionRecord) => applyState(r.id, evolutionState.applyingDown),
         setApplied: (r: Evolution | EvolutionRecord) => applyState(r.id, evolutionState.applied),
-        recordError: (id: number, error: string) =>
-          sqlRunner.exec(`update ${tableName} set last_problem = ? where id = ?`, [error, id])
+        recordError: (id: number, error: string) => sqlRunner.exec(`update ${tableName} set last_problem = ? where id = ?`, [error, id])
       }
     })
   )

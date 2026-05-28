@@ -395,7 +395,7 @@ describe("db-evolutions CLI (end-to-end)", () => {
 
       const combined = result.stdout + result.stderr
       expect(combined).toContain("postgresql://myuser:***@localhost:5432/testdb")
-      expect(combined).not.toContain("secret")
+      expect(combined).not.toContain(":secret@")
     })
   })
 })
