@@ -1,18 +1,19 @@
-import type { ConnectionConfig } from "../types.ts"
+import { parseConnectionUrl } from "../types.ts"
 import type { MigrationDriver } from "./driver.types.ts"
 import { fromMigrationDriver } from "../util/sql-runner.ts"
 
-export const createDriverFromConfig = async (config: ConnectionConfig): Promise<MigrationDriver> => {
-  switch (config.type) {
+export const createDriverFromConfig = async (connectionUrl: string): Promise<MigrationDriver> => {
+  const { scheme, url } = parseConnectionUrl(connectionUrl)
+  switch (scheme) {
     case "sqlite":
-      return createSqliteDriver(config.path)
+      return createSqliteDriver(url.pathname)
     case "postgresql":
-      return createPostgresqlDriver(config)
+      return createPostgresqlDriver(connectionUrl)
   }
 }
 
-export const createSqlRunnerFromConfig = async (config: ConnectionConfig) => {
-  const driver = await createDriverFromConfig(config)
+export const createSqlRunnerFromConfig = async (connectionUrl: string) => {
+  const driver = await createDriverFromConfig(connectionUrl)
   return fromMigrationDriver(driver)
 }
 
@@ -29,21 +30,11 @@ const createSqliteDriver = async (path: string): Promise<MigrationDriver> => {
   }
 }
 
-const createPostgresqlDriver = async (config: Extract<ConnectionConfig, { type: "postgresql" }>): Promise<MigrationDriver> => {
+const createPostgresqlDriver = async (connectionUrl: string): Promise<MigrationDriver> => {
   try {
     const { default: postgres } = await import("postgres")
     const { fromPostgresJs } = await import("./postgres-js.driver.js")
-    const sql = config.connectionString
-      ? postgres(config.connectionString)
-      : postgres({
-          host: config.host,
-          port: config.port,
-          database: config.database,
-          username: config.user,
-          password: config.password,
-          ssl: config.ssl ?? false
-        })
-    return fromPostgresJs(sql)
+    return fromPostgresJs(postgres(connectionUrl))
   } catch (err) {
     if (err instanceof Error && err.message.includes("Cannot find")) {
       throw new Error('PostgreSQL driver requires "postgres" as a dependency. Install it with: pnpm add postgres')

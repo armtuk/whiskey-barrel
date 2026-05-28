@@ -37,9 +37,7 @@ describe("fromMigrationDriver (better-sqlite3)", () => {
   it("exec() handles multi-statement DDL without params", async () => {
     const runner = fromMigrationDriver(fromBetterSqlite3(db))
 
-    await Effect.runPromise(
-      runner.exec("CREATE TABLE a (id INTEGER PRIMARY KEY); CREATE TABLE b (id INTEGER PRIMARY KEY);")
-    )
+    await Effect.runPromise(runner.exec("CREATE TABLE a (id INTEGER PRIMARY KEY); CREATE TABLE b (id INTEGER PRIMARY KEY);"))
 
     const tables = db.prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name").all() as { name: string }[]
     expect(tables.map(t => t.name)).toContain("a")

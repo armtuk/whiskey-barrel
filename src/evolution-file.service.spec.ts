@@ -2,7 +2,7 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { Effect, Layer } from "effect"
-import { afterEach, describe, expect, it } from "vitest"
+import { describe, expect, it } from "vitest"
 import { EvolutionFileParserLive } from "./evolution.parser.ts"
 import { EvolutionFileService, EvolutionFileServiceLive, FileLineReader } from "./evolution-file.service.ts"
 import type { MigratorOptions } from "./types.ts"
@@ -43,7 +43,7 @@ describe("EvolutionFileService.fetchEvolutions()", () => {
     dbType: "sqlite",
     evolutionsRoot,
     tableName: "db_evolutions",
-    verbose: false
+    quiet: true
   })
 
   it("returns evolutions sorted by id", async () => {
