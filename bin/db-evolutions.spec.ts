@@ -260,7 +260,8 @@ describe("db-evolutions CLI (end-to-end)", () => {
       const result = runCli(["apply"], emptyDir)
 
       expect(result.exitCode).toBe(1)
-      expect(result.stderr).toContain("No evolutions.config.ts found")
+      expect(result.stderr).toContain("No evolutions config found")
+      expect(result.stderr).toContain("Searched for:")
       rmSync(emptyDir, { recursive: true, force: true })
     })
 
@@ -285,6 +286,8 @@ describe("db-evolutions CLI (end-to-end)", () => {
 
       expect(result.exitCode).toBe(1)
       expect(result.stderr).toContain("Invalid connection config")
+      expect(result.stderr).toContain("Received:")
+      expect(result.stderr).toContain('"type": "postgresql"')
     })
 
     it("shows connection URL in stderr on startup", () => {

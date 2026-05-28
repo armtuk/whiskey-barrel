@@ -73,7 +73,7 @@ const loadConfig = (): Effect.Effect<EvolutionsConfig, Error> =>
     tryLoadConfig(CONFIG_FILENAMES[0]),
     Effect.orElse(() => tryLoadConfig(CONFIG_FILENAMES[1])),
     Effect.orElse(() => tryLoadConfig(CONFIG_FILENAMES[2])),
-    Effect.mapError(() => new Error("No evolutions.config.ts found in current directory"))
+    Effect.mapError(() => new Error(`No evolutions config found in ${process.cwd()}. Searched for: ${CONFIG_FILENAMES.join(", ")}`))
   )
 
 // ── Layer Construction ────────────────────────────────────────────────────────
@@ -161,6 +161,7 @@ export const statusCommand = (sqlRunner: SqlRunner["Type"], tableName: string) =
 export const resolveCommand = (ServiceLive: ReturnType<typeof buildLayers>, args: string[]) => {
   const id = parseInt(args[0] ?? "", 10)
   if (Number.isNaN(id)) {
+    console.error(`Invalid evolution id: "${args[0] ?? ""}" — expected a numeric id`)
     console.error("Usage: db-evolutions resolve <id>")
     process.exit(1)
   }
@@ -185,7 +186,8 @@ const main = async (): Promise<void> => {
   try {
     connection = connectionConfigValidator.parse(config.connection)
   } catch (err) {
-    console.error("Invalid connection config in evolutions.config:")
+    console.error("Invalid connection config in evolutions.config.")
+    console.error(`Received: ${JSON.stringify(config.connection, null, 2)}`)
     console.error(err instanceof Error ? err.message : String(err))
     process.exit(1)
   }
