@@ -15,5 +15,8 @@ export const fromNodeSqlite = (db: DatabaseSync): MigrationDriver => ({
     if (/^\s*SELECT\b/i.test(sql)) return stmt.all(...(params as Parameters<typeof stmt.all>)) as T[]
     stmt.run(...(params as Parameters<typeof stmt.run>))
     return []
+  },
+  close: async (): Promise<void> => {
+    db.close()
   }
 })

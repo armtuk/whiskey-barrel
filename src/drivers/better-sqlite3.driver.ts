@@ -14,5 +14,8 @@ export const fromBetterSqlite3 = (db: Database.Database): MigrationDriver => ({
     if (stmt.reader) return stmt.all(...params) as T[]
     stmt.run(...params)
     return []
+  },
+  close: async (): Promise<void> => {
+    db.close()
   }
 })

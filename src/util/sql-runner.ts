@@ -7,6 +7,7 @@ export class SqlRunner extends Context.Tag("SqlRunner")<
   {
     exec(s: string, params?: unknown[]): Effect.Effect<void, UnknownException, never>
     query<T>(s: string, params?: unknown[]): Effect.Effect<T[], UnknownException, never>
+    close(): Effect.Effect<void, UnknownException, never>
   }
 >() {}
 
@@ -17,6 +18,10 @@ export const fromMigrationDriver = (driver: MigrationDriver) => ({
 
   query<T = Record<string, unknown>>(s: string, params?: unknown[]): Effect.Effect<T[], UnknownException, never> {
     return Effect.tryPromise(() => driver.query<T>(s, params))
+  },
+
+  close(): Effect.Effect<void, UnknownException, never> {
+    return Effect.tryPromise(() => driver.close())
   }
 })
 

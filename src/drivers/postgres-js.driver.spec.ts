@@ -184,3 +184,28 @@ describe("postgres-js driver", () => {
     await expect(driver.exec("NOT VALID SQL AT ALL")).rejects.toThrow()
   })
 })
+
+describe("postgres-js driver close()", () => {
+  it("close() ends the connection pool so queries are no longer possible", async () => {
+    const { DB_HOST, DB_PORT, DB_NAME, DB_USERNAME, DB_PASSWORD } = process.env
+    if (!DB_HOST || !DB_NAME) {
+      throw new Error("PostgreSQL env vars (DB_HOST, DB_NAME) not set — check .env.local")
+    }
+
+    const conn = postgres({
+      host: DB_HOST,
+      port: Number(DB_PORT) || 5432,
+      database: DB_NAME,
+      username: DB_USERNAME,
+      password: DB_PASSWORD
+    })
+    const d = fromPostgresJs(conn)
+
+    const rows = await d.query("SELECT 1 as n")
+    expect(rows).toHaveLength(1)
+
+    await d.close()
+
+    await expect(d.query("SELECT 1 as n")).rejects.toThrow()
+  })
+})

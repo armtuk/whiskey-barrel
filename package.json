@@ -1,6 +1,6 @@
 {
   "name": "@alexrmturner/whiskey-barrel",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "Play Framework-style database evolutions for Node.js",
   "type": "module",
   "main": "./dist/index.cjs",
