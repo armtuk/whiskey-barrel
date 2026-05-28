@@ -17,7 +17,8 @@ import { fromMigrationDriver, SqlRunner } from "./util/sql-runner.ts"
 const SQL_1 = "-- #### !Ups\nCREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT);\n-- #### !Downs\nDROP TABLE users;"
 const SQL_2 = "-- #### !Ups\nCREATE TABLE posts (id INTEGER PRIMARY KEY, title TEXT);\n-- #### !Downs\nDROP TABLE posts;"
 const SQL_3 = "-- #### !Ups\nCREATE TABLE tags (id INTEGER PRIMARY KEY, label TEXT);\n-- #### !Downs\nDROP TABLE tags;"
-const SQL_2_CHANGED = "-- #### !Ups\nCREATE TABLE posts (id INTEGER PRIMARY KEY, title TEXT, body TEXT);\n-- #### !Downs\nDROP TABLE posts;"
+const _SQL_2_CHANGED =
+  "-- #### !Ups\nCREATE TABLE posts (id INTEGER PRIMARY KEY, title TEXT, body TEXT);\n-- #### !Downs\nDROP TABLE posts;"
 
 // ── Test Helpers ──────────────────────────────────────────────────────────────
 
@@ -136,11 +137,14 @@ describe("MigratorService.apply()", () => {
 
     await env.run(Effect.flatMap(MigratorService, svc => svc.apply()))
 
-    const row = env.db.prepare("SELECT state, last_problem FROM db_evolutions WHERE id = 1").get() as { state: string; last_problem: string | null }
+    const row = env.db.prepare("SELECT state, last_problem FROM db_evolutions WHERE id = 1").get() as {
+      state: string
+      last_problem: string | null
+    }
     expect(row).toBeTruthy()
     expect(row.state).toBe("applying_up")
     expect(row.last_problem).toBeTruthy()
-    expect(row.last_problem!.length).toBeGreaterThan(5)
+    expect(row.last_problem?.length).toBeGreaterThan(5)
   })
 
   it("applies earlier evolutions and fails on the broken one", async () => {

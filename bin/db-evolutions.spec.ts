@@ -33,7 +33,9 @@ const runCli = (args: string[], cwd: string, env: Record<string, string> = {}): 
   } catch (err: unknown) {
     const e = err as { stdout?: string; status?: number }
     let stderr = ""
-    try { stderr = readFileSync(stderrFile, "utf-8") } catch {}
+    try {
+      stderr = readFileSync(stderrFile, "utf-8")
+    } catch {}
     rmSync(stderrFile, { force: true })
     return {
       stdout: e.stdout ?? "",
@@ -191,10 +193,13 @@ describe("db-evolutions CLI (end-to-end)", () => {
       project.run(["apply"])
 
       const db = new Database(project.dbPath)
-      const row = db.prepare("SELECT state, last_problem FROM db_evolutions WHERE id = 1").get() as { state: string; last_problem: string | null }
+      const row = db.prepare("SELECT state, last_problem FROM db_evolutions WHERE id = 1").get() as {
+        state: string
+        last_problem: string | null
+      }
       expect(row.state).toBe("applying_up")
       expect(row.last_problem).toBeTruthy()
-      expect(row.last_problem!.length).toBeGreaterThan(5)
+      expect(row.last_problem?.length).toBeGreaterThan(5)
       db.close()
     })
 

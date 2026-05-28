@@ -16,13 +16,10 @@ import {
   evolutionRecordValidator,
   evolutionState,
   extractErrorMessage,
-  InconsistentDatabaseError,
-  InitializationError,
   MigrationExecError,
   type MigratorOptions,
   NotFoundError,
   type ResolveResult,
-  type RollbackResult,
   resolveResult,
   type StatusResult,
   type StatusStuckResult,
@@ -95,7 +92,7 @@ export const MigratorServiceLive = (options: MigratorOptions) => {
             evolutionState.applyingDown
           ]),
           Effect.map(rows => {
-            if (rows.length == 0) {
+            if (rows.length === 0) {
               return { _tag: "success" } as StatusSuccessResult
             } else {
               return {
@@ -109,9 +106,9 @@ export const MigratorServiceLive = (options: MigratorOptions) => {
       }
 
       const fetchAllRecords = (): Effect.Effect<EvolutionRecord[], UnknownException | ZodError, never> =>
-        sqlRunner.query<unknown>(`SELECT * FROM ${options.tableName} ORDER BY id`).pipe(
-          Effect.flatMap(rows => Effect.forEach(rows, zodParseEffect(evolutionRecordValidator)))
-        )
+        sqlRunner
+          .query<unknown>(`SELECT * FROM ${options.tableName} ORDER BY id`)
+          .pipe(Effect.flatMap(rows => Effect.forEach(rows, zodParseEffect(evolutionRecordValidator))))
 
       const applyOneUp = (x: Evolution) =>
         pipe(
@@ -151,33 +148,33 @@ export const MigratorServiceLive = (options: MigratorOptions) => {
 
       const applyDownToDiverged = (
         diverged: DivergedEvolution,
-        files: Evolution[],
+        _files: Evolution[],
         records: EvolutionRecord[]
       ): Effect.Effect<ApplyResult, UnknownException> => {
         const toRollback = [...records.slice(records.findIndex(x => x.hash === diverged.record?.hash))].reverse()
         return pipe(
-          Effect.forEach(toRollback, x => pipe(
-            Effect.logInfo(`Rolling back evolution ${x.id}`),
-            Effect.andThen(() => rollbackOneDown(x))
-          )),
+          Effect.forEach(toRollback, x =>
+            pipe(
+              Effect.logInfo(`Rolling back evolution ${x.id}`),
+              Effect.andThen(() => rollbackOneDown(x))
+            )
+          ),
           Effect.map(() => applyResult.success() as ApplyResult),
-          Effect.catchTag("MigrationExecError", err =>
-            Effect.succeed(applyResult.failure(err.message) as ApplyResult)
-          )
+          Effect.catchTag("MigrationExecError", err => Effect.succeed(applyResult.failure(err.message) as ApplyResult))
         )
       }
 
-      const applyUpFromDiverged = (diverged: DivergedEvolution, files: Evolution[], records: EvolutionRecord[]) => {
+      const applyUpFromDiverged = (diverged: DivergedEvolution, files: Evolution[], _records: EvolutionRecord[]) => {
         const toApply = files.slice(files.findIndex(x => x.hash === diverged.file?.hash))
         return pipe(
-          Effect.forEach(toApply, x => pipe(
-            Effect.logInfo(`Applying evolution ${x.id}`),
-            Effect.andThen(() => applyOneUp(x))
-          )),
+          Effect.forEach(toApply, x =>
+            pipe(
+              Effect.logInfo(`Applying evolution ${x.id}`),
+              Effect.andThen(() => applyOneUp(x))
+            )
+          ),
           Effect.map(() => applyResult.success() as ApplyResult),
-          Effect.catchTag("MigrationExecError", err =>
-            Effect.succeed(applyResult.failure(err.message) as ApplyResult)
-          )
+          Effect.catchTag("MigrationExecError", err => Effect.succeed(applyResult.failure(err.message) as ApplyResult))
         )
       }
 
@@ -215,9 +212,7 @@ export const MigratorServiceLive = (options: MigratorOptions) => {
                   pipe(
                     applyDownToDiverged(d, files, records),
                     Effect.flatMap(result =>
-                      result._tag === "ApplyFailureResult"
-                        ? Effect.succeed(result)
-                        : applyUpFromDiverged(d, files, records)
+                      result._tag === "ApplyFailureResult" ? Effect.succeed(result) : applyUpFromDiverged(d, files, records)
                     )
                   )
               }),
@@ -235,7 +230,7 @@ export const MigratorServiceLive = (options: MigratorOptions) => {
         return Option.fromNullable(unmatched)
       }
 
-      const rollback = () =>
+      const _rollback = () =>
         Effect.gen(function* () {
           yield* initialize()
 
@@ -286,9 +281,14 @@ export const MigratorServiceLive = (options: MigratorOptions) => {
     })
   ).pipe(
     Layer.provide(Logger.minimumLogLevel(logLevel)),
-    Layer.provide(Logger.replace(Logger.defaultLogger, Logger.make(({ message }) => {
-      const text = Array.isArray(message) ? message.join(" ") : String(message)
-      process.stderr.write(`${text}\n`)
-    })))
+    Layer.provide(
+      Logger.replace(
+        Logger.defaultLogger,
+        Logger.make(({ message }) => {
+          const text = Array.isArray(message) ? message.join(" ") : String(message)
+          process.stderr.write(`${text}\n`)
+        })
+      )
+    )
   )
 }

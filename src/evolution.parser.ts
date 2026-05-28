@@ -29,7 +29,7 @@ export const EvolutionFileParserLive = () =>
     Effect.gen(function* () {
       const computeHash = (lines: string[]): string => {
         const hash = createHash("md5")
-        lines.forEach(line => hash.update(line.trim()))
+        for (const line of lines) hash.update(line.trim())
         return hash.digest("hex")
       }
 
@@ -44,10 +44,18 @@ export const EvolutionFileParserLive = () =>
         const downsMarker = lines.findIndex(x => x.startsWith(DOWNS_MARKER))
 
         if (upsMarker === -1) {
-          return Effect.fail(new EvolutionParseError({ error: `Missing "${UPS_MARKER}" marker. Each evolution file must contain an Ups section and a Downs section.` }))
+          return Effect.fail(
+            new EvolutionParseError({
+              error: `Missing "${UPS_MARKER}" marker. Each evolution file must contain an Ups section and a Downs section.`
+            })
+          )
         }
         if (downsMarker === -1) {
-          return Effect.fail(new EvolutionParseError({ error: `Missing "${DOWNS_MARKER}" marker. Each evolution file must contain an Ups section and a Downs section.` }))
+          return Effect.fail(
+            new EvolutionParseError({
+              error: `Missing "${DOWNS_MARKER}" marker. Each evolution file must contain an Ups section and a Downs section.`
+            })
+          )
         }
 
         return Effect.succeed({ up: lines.slice(upsMarker + 1, downsMarker).join("\n"), down: lines.slice(downsMarker + 1).join("\n") })

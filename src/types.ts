@@ -48,19 +48,22 @@ export const dbType: Record<(typeof dbTypes)[number], (typeof dbTypes)[number]> 
 
 export type DbType = (typeof dbTypes)[number]
 
-export const connectionConfigValidator = z.string().url().refine(
-  (url) => {
-    const scheme = new URL(url).protocol
-    return scheme === "postgresql:" || scheme === "postgres:" || scheme === "sqlite:"
-  },
-  { message: "Connection URL must use postgresql://, postgres://, or sqlite:// scheme" }
-)
+export const connectionConfigValidator = z
+  .string()
+  .url()
+  .refine(
+    url => {
+      const scheme = new URL(url).protocol
+      return scheme === "postgresql:" || scheme === "postgres:" || scheme === "sqlite:"
+    },
+    { message: "Connection URL must use postgresql://, postgres://, or sqlite:// scheme" }
+  )
 
 export type ConnectionConfig = z.infer<typeof connectionConfigValidator>
 
 export const parseConnectionUrl = (url: string): { scheme: "postgresql" | "sqlite"; url: URL } => {
   const parsed = new URL(url)
-  const scheme = parsed.protocol === "sqlite:" ? "sqlite" as const : "postgresql" as const
+  const scheme = parsed.protocol === "sqlite:" ? ("sqlite" as const) : ("postgresql" as const)
   return { scheme, url: parsed }
 }
 
@@ -187,9 +190,7 @@ export class MigrationExecError extends Data.TaggedError("MigrationExecError")<{
 }
 
 export const extractErrorMessage = (err: unknown): string => {
-  const inner = err && typeof err === "object" && "error" in err
-    ? (err as { error: unknown }).error
-    : err
+  const inner = err && typeof err === "object" && "error" in err ? (err as { error: unknown }).error : err
   if (inner instanceof Error) return inner.message
   if (typeof inner === "string") return inner
   return String(inner)
