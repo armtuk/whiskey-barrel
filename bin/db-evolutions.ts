@@ -27,7 +27,7 @@ interface EvolutionsConfig {
   options: MigratorOptionsInput
 }
 
-interface CommandLineArguments {
+export interface CommandLineArguments {
   command: string
   args: string[]
   verbose: boolean
@@ -35,7 +35,7 @@ interface CommandLineArguments {
 
 // ── Argv Parsing ──────────────────────────────────────────────────────────────
 
-const parseArgs = (): CommandLineArguments => {
+export const parseArgs = (): CommandLineArguments => {
   const argv = process.argv.slice(2)
   const verbose = argv.includes("--verbose") || argv.includes("-v")
   const positional = argv.filter(a => a !== "--verbose" && a !== "-v")
@@ -103,17 +103,16 @@ export const buildStatusReport = (rows: EvolutionStatusRow[]): StatusReport => {
   if (rows.length === 0) return { appliedCount: 0, stuckEvolutions: [] }
 
   const last = rows[rows.length - 1]
+  const stuck = rows.filter(r => r.state !== evolutionState.applied)
   return {
-    appliedCount: rows.length,
+    appliedCount: rows.length - stuck.length,
     lastEvolution: { id: last.id, state: last.state, appliedAt: last.applied_at, lastProblem: last.last_problem },
-    stuckEvolutions: rows
-      .filter(r => r.state !== evolutionState.applied)
-      .map(r => ({ id: r.id, state: r.state, lastProblem: r.last_problem }))
+    stuckEvolutions: stuck.map(r => ({ id: r.id, state: r.state, lastProblem: r.last_problem }))
   }
 }
 
 const printStatusReport = (report: StatusReport): void => {
-  if (report.appliedCount === 0) {
+  if (report.appliedCount === 0 && report.stuckEvolutions.length === 0) {
     console.log("No evolutions applied.")
     return
   }
@@ -138,13 +137,13 @@ const printStatusReport = (report: StatusReport): void => {
   }
 }
 
-const applyCommand = (ServiceLive: ReturnType<typeof buildLayers>) =>
+export const applyCommand = (ServiceLive: ReturnType<typeof buildLayers>) =>
   Effect.provide(
     Effect.flatMap(MigratorService, svc => svc.apply()),
     ServiceLive
   ).pipe(Effect.map(result => console.log(JSON.stringify(result, null, 2))))
 
-const statusCommand = (sqlRunner: SqlRunner["Type"], tableName: string) =>
+export const statusCommand = (sqlRunner: SqlRunner["Type"], tableName: string) =>
   sqlRunner.query<EvolutionStatusRow>(
     `SELECT id, state, last_problem, applied_at FROM ${tableName} ORDER BY id`
   ).pipe(
@@ -152,7 +151,7 @@ const statusCommand = (sqlRunner: SqlRunner["Type"], tableName: string) =>
     Effect.map(printStatusReport)
   )
 
-const resolveCommand = (ServiceLive: ReturnType<typeof buildLayers>, args: string[]) => {
+export const resolveCommand = (ServiceLive: ReturnType<typeof buildLayers>, args: string[]) => {
   const id = parseInt(args[0] ?? "", 10)
   if (Number.isNaN(id)) {
     console.error("Usage: db-evolutions resolve <id>")
@@ -177,10 +176,10 @@ const main = async (): Promise<void> => {
   const options = migratorOptionsValidator.parse(config.options)
   const ServiceLive = buildLayers(config, sqlRunner)
 
-  const commands: Record<string, Effect.Effect<void, unknown, never>> = {
-    apply: applyCommand(ServiceLive),
-    status: statusCommand(sqlRunner, options.tableName),
-    resolve: resolveCommand(ServiceLive, args)
+  const commands: Record<string, () => Effect.Effect<void, unknown, never>> = {
+    apply: () => applyCommand(ServiceLive),
+    status: () => statusCommand(sqlRunner, options.tableName),
+    resolve: () => resolveCommand(ServiceLive, args)
   }
 
   try {
@@ -190,7 +189,7 @@ const main = async (): Promise<void> => {
       console.error("Usage: db-evolutions <apply | status | resolve <id>>")
       process.exit(1)
     }
-    await Effect.runPromise(handler)
+    await Effect.runPromise(handler())
   } finally {
     await driver.close()
   }
