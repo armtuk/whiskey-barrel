@@ -12,6 +12,7 @@ import {
   type DivergedEvolution,
   divergedEvolution,
   type Evolution,
+  type EvolutionDivergence,
   type EvolutionRecord,
   evolutionRecordValidator,
   evolutionState,
@@ -62,6 +63,7 @@ export class MigratorService extends Context.Tag("MigratorService")<
   MigratorService,
   {
     apply: () => Effect.Effect<ApplyResult, ZodError | PlatformError | UnknownException | EvolutionParseError>
+    status: () => Effect.Effect<StatusResult, ZodError | PlatformError | UnknownException | EvolutionParseError>
     resolve: (id: number) => Effect.Effect<ResolveResult, UnknownException>
   }
 >() {}
@@ -85,25 +87,57 @@ export const MigratorServiceLive = (options: MigratorOptions) => {
           yield* sqlRunner.exec(sql)
         })
 
-      const status = (): Effect.Effect<StatusResult, UnknownException, never> => {
-        return pipe(
+      const checkDatabaseState = (): Effect.Effect<StatusSuccessResult | StatusStuckResult, UnknownException, never> =>
+        pipe(
           sqlRunner.query<EvolutionRecord>(`select * from ${options.tableName} where state in (?, ?) order by id asc limit 1`, [
             evolutionState.applyingUp,
             evolutionState.applyingDown
           ]),
           Effect.map(rows => {
             if (rows.length === 0) {
-              return { _tag: "success" } as StatusSuccessResult
-            } else {
-              return {
-                _tag: "stuck",
-                message: rows[0].last_problem || `Unknown Problem Occurred applying evolution ID ${rows[0].id}`,
-                evolutionRecord: rows[0]
-              } as StatusStuckResult
+              return { _tag: "success", appliedCount: 0, divergences: [] } as StatusSuccessResult
             }
+            return {
+              _tag: "stuck",
+              message: rows[0].last_problem || `Unknown Problem Occurred applying evolution ID ${rows[0].id}`,
+              evolutionRecord: rows[0]
+            } as StatusStuckResult
           })
         )
+
+      const findAllDivergences = (files: Evolution[], records: EvolutionRecord[]): EvolutionDivergence[] => {
+        const maxLen = Math.max(files.length, records.length)
+        const result: EvolutionDivergence[] = []
+        for (let i = 0; i < maxLen; i++) {
+          const file = files[i] as Evolution | undefined
+          const record = records[i] as EvolutionRecord | undefined
+          if (file?.hash === record?.hash) continue
+          const id = file?.id ?? record?.id
+          if (id === undefined) continue
+          if (file && !record) {
+            result.push({ id, type: "new", fileHash: file.hash })
+          } else if (record && !file) {
+            result.push({ id, type: "removed", recordHash: record.hash })
+          } else if (file && record) {
+            result.push({ id, type: "changed", fileHash: file.hash, recordHash: record.hash })
+          }
+        }
+        return result
       }
+
+      const status = (): Effect.Effect<StatusResult, UnknownException | ZodError | PlatformError | EvolutionParseError> =>
+        Effect.gen(function* () {
+          yield* initialize()
+          const stuckCheck = yield* checkDatabaseState()
+          if (stuckCheck._tag === "stuck") return stuckCheck
+
+          const files = yield* fileService.fetchEvolutions()
+          const records = yield* fetchAllRecords()
+          const appliedCount = records.filter(r => r.state === evolutionState.applied).length
+          const divergences = findAllDivergences(files, records)
+
+          return { _tag: "success", appliedCount, divergences } as StatusSuccessResult
+        })
 
       const fetchAllRecords = (): Effect.Effect<EvolutionRecord[], UnknownException | ZodError, never> =>
         sqlRunner
@@ -183,12 +217,9 @@ export const MigratorServiceLive = (options: MigratorOptions) => {
           yield* initialize()
           yield* Effect.logInfo(`Initialized table ${options.tableName}`)
 
-          const x = yield* status()
+          const x = yield* checkDatabaseState()
           if (x._tag === "stuck") {
             return applyResult.failure(x.message, x.evolutionRecord)
-          }
-          if (x._tag === "failure") {
-            return applyResult.failure(x.error || "Unknown error applying evolutions")
           }
           yield* Effect.logInfo("Database state is clean")
 
@@ -277,7 +308,7 @@ export const MigratorServiceLive = (options: MigratorOptions) => {
           })
         })
 
-      return { apply, resolve }
+      return { apply, status, resolve }
     })
   ).pipe(
     Layer.provide(Logger.minimumLogLevel(logLevel)),

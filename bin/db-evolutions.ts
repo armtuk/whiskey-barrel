@@ -12,7 +12,6 @@ import {
   EvolutionFileParserLive,
   EvolutionFileServiceLive,
   EvolutionRepositoryLive,
-  evolutionState,
   FileLineReaderLive,
   fromMigrationDriver,
   MigratorService,
@@ -87,66 +86,6 @@ const buildLayers = (config: EvolutionsConfig, sqlRunnerImpl: SqlRunner["Type"])
 
 // ── Commands ──────────────────────────────────────────────────────────────────
 
-interface EvolutionStatusRow {
-  id: number
-  state: string
-  last_problem: string | null
-  applied_at: string
-}
-
-export interface StatusReport {
-  appliedCount: number
-  lastEvolution?: { id: number; state: string; appliedAt: string; lastProblem: string | null }
-  stuckEvolutions: { id: number; state: string; lastProblem: string | null }[]
-}
-
-export const buildStatusReport = (rows: EvolutionStatusRow[]): StatusReport => {
-  if (rows.length === 0) return { appliedCount: 0, stuckEvolutions: [] }
-
-  const last = rows[rows.length - 1]
-  const stuck = rows.filter(r => r.state !== evolutionState.applied)
-  return {
-    appliedCount: rows.length - stuck.length,
-    lastEvolution: { id: last.id, state: last.state, appliedAt: last.applied_at, lastProblem: last.last_problem },
-    stuckEvolutions: stuck.map(r => ({ id: r.id, state: r.state, lastProblem: r.last_problem }))
-  }
-}
-
-const printStatusReport = (report: StatusReport): void => {
-  if (report.appliedCount === 0 && report.stuckEvolutions.length === 0) {
-    console.log("No evolutions applied.")
-    return
-  }
-
-  console.log(`${report.appliedCount} evolution(s) applied.`)
-  if (report.lastEvolution) {
-    if (report.lastEvolution.state === evolutionState.applied) {
-      console.log(
-        `Last evolution: #${report.lastEvolution.id} — applied successfully at ${new Date(report.lastEvolution.appliedAt).toLocaleString()}`
-      )
-      if (report.lastEvolution.lastProblem) {
-        console.log(`  Previous error (now resolved): ${report.lastEvolution.lastProblem}`)
-      }
-    } else {
-      console.log(`Last evolution: #${report.lastEvolution.id} — state: ${report.lastEvolution.state}`)
-      if (report.lastEvolution.lastProblem) {
-        console.log(`  Error: ${report.lastEvolution.lastProblem}`)
-      }
-    }
-  }
-
-  if (report.stuckEvolutions.length > 0) {
-    console.log(`\n${report.stuckEvolutions.length} stuck evolution(s):`)
-    report.stuckEvolutions.forEach(r => {
-      console.log(`  #${r.id} — ${r.state}`)
-      if (r.lastProblem) {
-        console.log(`    Error: ${r.lastProblem}`)
-      }
-      console.log(`    Run 'db-evolutions resolve ${r.id}' after fixing the issue.`)
-    })
-  }
-}
-
 export const applyCommand = (ServiceLive: ReturnType<typeof buildLayers>) =>
   Effect.provide(
     Effect.flatMap(MigratorService, svc => svc.apply()),
@@ -165,21 +104,44 @@ export const applyCommand = (ServiceLive: ReturnType<typeof buildLayers>) =>
     })
   )
 
-export const statusCommand = (sqlRunner: SqlRunner["Type"], tableName: string) =>
-  sqlRunner.query<EvolutionStatusRow>(`SELECT id, state, last_problem, applied_at FROM ${tableName} ORDER BY id`).pipe(
-    Effect.map(buildStatusReport),
-    Effect.map(printStatusReport),
-    Effect.catchAll(err =>
-      Effect.sync(() => {
-        const msg = extractErrorMessage(err)
-        if (msg.includes("no such table") || msg.includes("does not exist")) {
-          console.log("No evolutions table found. Run 'db-evolutions apply' to initialize.")
-        } else {
-          console.error(`Error querying status: ${msg}`)
-          process.exit(1)
+export const statusCommand = (ServiceLive: ReturnType<typeof buildLayers>) =>
+  Effect.provide(
+    Effect.flatMap(MigratorService, svc => svc.status()),
+    ServiceLive
+  ).pipe(
+    Effect.tap(result => {
+      if (result._tag === "stuck") {
+        console.log("1 stuck evolution:")
+        console.log(`  #${result.evolutionRecord.id} — ${result.evolutionRecord.state}`)
+        if (result.message) console.log(`    Error: ${result.message}`)
+        console.log(`    Run 'db-evolutions resolve ${result.evolutionRecord.id}' after fixing the issue.`)
+        return
+      }
+      if (result._tag === "failure") {
+        console.error(`Error: ${result.error}`)
+        process.exit(1)
+        return
+      }
+      if (result.appliedCount === 0 && result.divergences.length === 0) {
+        console.log("No evolutions applied.")
+        return
+      }
+      console.log(`${result.appliedCount} evolution(s) applied.`)
+      if (result.divergences.length > 0) {
+        console.log(`\n${result.divergences.length} divergence(s) detected:`)
+        for (const d of result.divergences) {
+          if (d.type === "changed") {
+            console.log(`  #${d.id} — hash changed (file: ${d.fileHash?.slice(0, 8)}, record: ${d.recordHash?.slice(0, 8)})`)
+          } else if (d.type === "new") {
+            console.log(`  #${d.id} — new file (not yet applied)`)
+          } else {
+            console.log(`  #${d.id} — file removed (still in database)`)
+          }
         }
-      })
-    )
+      } else {
+        console.log("All evolutions up to date.")
+      }
+    })
   )
 
 export const resolveCommand = (ServiceLive: ReturnType<typeof buildLayers>, args: string[]) => {
@@ -236,7 +198,7 @@ const main = async (): Promise<void> => {
 
   const commands: Record<string, () => Effect.Effect<void, unknown, never>> = {
     apply: () => applyCommand(ServiceLive),
-    status: () => statusCommand(sqlRunner, options.tableName),
+    status: () => statusCommand(ServiceLive),
     resolve: () => resolveCommand(ServiceLive, args)
   }
 

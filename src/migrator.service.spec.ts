@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs"
+import { mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import Database from "better-sqlite3"
@@ -212,6 +212,110 @@ describe("MigratorService.apply()", () => {
     expect(result._tag).toBe("ApplySuccessResult")
     expect(countRows(customDb, "my_migrations")).toBe(1)
     customDb.close()
+  })
+})
+
+describe("MigratorService.status()", () => {
+  let env: TestEnv
+
+  beforeEach(() => {
+    env = createTestEnv()
+  })
+  afterEach(() => {
+    env.db.close()
+  })
+
+  it("returns success with 0 applied and no divergences on empty DB", async () => {
+    const result = await env.run(Effect.flatMap(MigratorService, svc => svc.status()))
+
+    expect(result._tag).toBe("success")
+    if (result._tag === "success") {
+      expect(result.appliedCount).toBe(0)
+      expect(result.divergences).toEqual([])
+    }
+  })
+
+  it("returns correct appliedCount and no divergences when all files match", async () => {
+    env.writeFile("1.sql", SQL_1)
+    env.writeFile("2.sql", SQL_2)
+    await env.run(Effect.flatMap(MigratorService, svc => svc.apply()))
+
+    const result = await env.run(Effect.flatMap(MigratorService, svc => svc.status()))
+
+    expect(result._tag).toBe("success")
+    if (result._tag === "success") {
+      expect(result.appliedCount).toBe(2)
+      expect(result.divergences).toEqual([])
+    }
+  })
+
+  it("detects new file divergence when file exists but no record", async () => {
+    env.writeFile("1.sql", SQL_1)
+    await env.run(Effect.flatMap(MigratorService, svc => svc.apply()))
+
+    env.writeFile("2.sql", SQL_2)
+    const result = await env.run(Effect.flatMap(MigratorService, svc => svc.status()))
+
+    expect(result._tag).toBe("success")
+    if (result._tag === "success") {
+      expect(result.appliedCount).toBe(1)
+      expect(result.divergences).toHaveLength(1)
+      expect(result.divergences[0].id).toBe(2)
+      expect(result.divergences[0].type).toBe("new")
+      expect(result.divergences[0].fileHash).toBeDefined()
+    }
+  })
+
+  it("detects changed hash divergence when file content differs from record", async () => {
+    env.writeFile("1.sql", SQL_1)
+    env.writeFile("2.sql", SQL_2)
+    await env.run(Effect.flatMap(MigratorService, svc => svc.apply()))
+
+    env.writeFile("2.sql", _SQL_2_CHANGED)
+    const result = await env.run(Effect.flatMap(MigratorService, svc => svc.status()))
+
+    expect(result._tag).toBe("success")
+    if (result._tag === "success") {
+      expect(result.appliedCount).toBe(2)
+      expect(result.divergences).toHaveLength(1)
+      expect(result.divergences[0].id).toBe(2)
+      expect(result.divergences[0].type).toBe("changed")
+      expect(result.divergences[0].fileHash).toBeDefined()
+      expect(result.divergences[0].recordHash).toBeDefined()
+      expect(result.divergences[0].fileHash).not.toBe(result.divergences[0].recordHash)
+    }
+  })
+
+  it("detects removed file divergence when record exists but file deleted", async () => {
+    env.writeFile("1.sql", SQL_1)
+    env.writeFile("2.sql", SQL_2)
+    await env.run(Effect.flatMap(MigratorService, svc => svc.apply()))
+
+    unlinkSync(join(env.evolutionsRoot, "testdb", "2.sql"))
+    const result = await env.run(Effect.flatMap(MigratorService, svc => svc.status()))
+
+    expect(result._tag).toBe("success")
+    if (result._tag === "success") {
+      expect(result.appliedCount).toBe(2)
+      expect(result.divergences).toHaveLength(1)
+      expect(result.divergences[0].id).toBe(2)
+      expect(result.divergences[0].type).toBe("removed")
+      expect(result.divergences[0].recordHash).toBeDefined()
+    }
+  })
+
+  it("returns stuck result when evolution is stuck", async () => {
+    env.writeFile("1.sql", SQL_1)
+    await env.run(Effect.flatMap(MigratorService, svc => svc.apply()))
+    env.db.prepare("UPDATE db_evolutions SET state = 'applying_up', last_problem = 'test error' WHERE id = 1").run()
+
+    const result = await env.run(Effect.flatMap(MigratorService, svc => svc.status()))
+
+    expect(result._tag).toBe("stuck")
+    if (result._tag === "stuck") {
+      expect(result.evolutionRecord.id).toBe(1)
+      expect(result.message).toBe("test error")
+    }
   })
 })
 

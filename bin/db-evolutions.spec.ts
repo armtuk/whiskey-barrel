@@ -222,23 +222,14 @@ describe("db-evolutions CLI (end-to-end)", () => {
   // ── status command ────────────────────────────────────────────────────────
 
   describe("status", () => {
-    it("handles missing evolutions table gracefully", () => {
-      const result = project.run(["status"])
-
-      expect(result.exitCode).toBe(0)
-      expect(result.stdout).toContain("No evolutions table found")
-    })
-
     it("reports no evolutions on a fresh database", () => {
-      project.run(["apply"])
-
       const result = project.run(["status"])
 
       expect(result.exitCode).toBe(0)
       expect(result.stdout).toContain("No evolutions applied")
     })
 
-    it("reports applied count and last evolution after apply", () => {
+    it("reports applied count and all up to date after apply", () => {
       project.writeEvolution(1, SQL_1)
       project.writeEvolution(2, SQL_2)
       project.run(["apply"])
@@ -247,8 +238,7 @@ describe("db-evolutions CLI (end-to-end)", () => {
 
       expect(result.exitCode).toBe(0)
       expect(result.stdout).toContain("2 evolution(s) applied")
-      expect(result.stdout).toContain("Last evolution: #2")
-      expect(result.stdout).toContain("applied successfully")
+      expect(result.stdout).toContain("All evolutions up to date")
     })
 
     it("reports stuck evolutions with error messages", () => {
@@ -262,9 +252,36 @@ describe("db-evolutions CLI (end-to-end)", () => {
       const result = project.run(["status"])
 
       expect(result.exitCode).toBe(0)
-      expect(result.stdout).toContain("0 evolution(s) applied")
       expect(result.stdout).toContain("stuck")
       expect(result.stdout).toContain("column already exists")
+    })
+
+    it("detects new file divergence", () => {
+      project.writeEvolution(1, SQL_1)
+      project.run(["apply"])
+
+      project.writeEvolution(2, SQL_2)
+      const result = project.run(["status"])
+
+      expect(result.exitCode).toBe(0)
+      expect(result.stdout).toContain("1 evolution(s) applied")
+      expect(result.stdout).toContain("1 divergence(s) detected")
+      expect(result.stdout).toContain("#2 — new file")
+    })
+
+    it("detects changed hash divergence", () => {
+      project.writeEvolution(1, SQL_1)
+      project.writeEvolution(2, SQL_2)
+      project.run(["apply"])
+
+      const SQL_2_CHANGED = "-- #### !Ups\nCREATE TABLE posts (id INTEGER PRIMARY KEY, title TEXT, body TEXT);\n-- #### !Downs\nDROP TABLE posts;"
+      project.writeEvolution(2, SQL_2_CHANGED)
+      const result = project.run(["status"])
+
+      expect(result.exitCode).toBe(0)
+      expect(result.stdout).toContain("2 evolution(s) applied")
+      expect(result.stdout).toContain("1 divergence(s) detected")
+      expect(result.stdout).toContain("#2 — hash changed")
     })
   })
 

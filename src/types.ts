@@ -96,8 +96,19 @@ export const defineConfig = (config: MigratorOptionsInput): MigratorOptionsInput
 
 // ── Result Types ───────────────────────────────────────────────────────────────
 
+export type DivergenceType = "changed" | "new" | "removed"
+
+export interface EvolutionDivergence {
+  id: number
+  type: DivergenceType
+  fileHash?: string
+  recordHash?: string
+}
+
 export interface StatusSuccessResult {
   _tag: "success"
+  appliedCount: number
+  divergences: EvolutionDivergence[]
 }
 
 export interface StatusStuckResult {
