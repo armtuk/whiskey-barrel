@@ -1,4 +1,4 @@
-import { Data, Effect, type Stream } from "effect"
+import { Data, Effect } from "effect"
 import type { UnknownException } from "effect/Cause"
 import { z } from "zod"
 
@@ -24,12 +24,6 @@ export const evolutionValidator = z
   .strict()
 
 export type Evolution = z.infer<typeof evolutionValidator>
-
-export type EvolutionLazy = {
-  up: Stream.Stream<string>
-  down: Stream.Stream<string>
-  hash: (stream: Stream.Stream<string>) => Effect.Effect<string>
-}
 
 export const evolutionRecordValidator = z
   .object({
@@ -91,7 +85,8 @@ export const migratorOptionsValidator = z
     tableName: z
       .string()
       .regex(/^[a-zA-Z_][a-zA-Z0-9_]*$/, "tableName must be a valid SQL identifier")
-      .default("db_evolutions")
+      .default("db_evolutions"),
+    verbose: z.boolean().default(false)
   })
   .strict()
 

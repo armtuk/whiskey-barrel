@@ -1,6 +1,6 @@
 {
   "name": "@alexrmturner/whiskey-barrel",
-  "version": "0.1.0",
+  "version": "0.1.3",
   "description": "Play Framework-style database evolutions for Node.js",
   "type": "module",
   "main": "./dist/index.cjs",
@@ -15,16 +15,6 @@
       "require": {
         "types": "./dist/index.d.cts",
         "default": "./dist/index.cjs"
-      }
-    },
-    "./drivers/pg": {
-      "import": {
-        "types": "./dist/drivers/pg.driver.d.ts",
-        "default": "./dist/drivers/pg.driver.js"
-      },
-      "require": {
-        "types": "./dist/drivers/pg.driver.d.cts",
-        "default": "./dist/drivers/pg.driver.cjs"
       }
     },
     "./drivers/postgres-js": {

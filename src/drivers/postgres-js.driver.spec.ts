@@ -2,8 +2,8 @@ import { config } from "dotenv"
 import type { Sql } from "postgres"
 import postgres from "postgres"
 import { afterAll, beforeAll, describe, expect, it } from "vitest"
-import type { MigrationDriver } from "./driver.types.js"
-import { fromPostgresJs } from "./postgres-js.driver.js"
+import type { MigrationDriver } from "./driver.types.ts"
+import { fromPostgresJs } from "./postgres-js.driver.ts"
 
 config({ path: ".env.local" })
 
@@ -60,6 +60,19 @@ describe("postgres-js driver", () => {
 
     const rows = await sql`SELECT * FROM ${sql(TEST_TABLE)} ORDER BY id`
     expect(rows).toHaveLength(2)
+  })
+
+  it("exec binds driver-style ? parameters", async () => {
+    await driver.exec(
+      `INSERT INTO ${TEST_TABLE} (id, name) VALUES (?, ?)`,
+      [99, "parameterized"]
+    )
+
+    const rows = await sql`SELECT name FROM ${sql(TEST_TABLE)} WHERE id = 99`
+    expect(rows).toHaveLength(1)
+    expect(rows[0].name).toBe("parameterized")
+
+    await sql`DELETE FROM ${sql(TEST_TABLE)} WHERE id = 99`
   })
 
   it("query binds driver-style ? parameters in order", async () => {
@@ -169,5 +182,30 @@ describe("postgres-js driver", () => {
 
   it("exec throws on invalid SQL", async () => {
     await expect(driver.exec("NOT VALID SQL AT ALL")).rejects.toThrow()
+  })
+})
+
+describe("postgres-js driver close()", () => {
+  it("close() ends the connection pool so queries are no longer possible", async () => {
+    const { DB_HOST, DB_PORT, DB_NAME, DB_USERNAME, DB_PASSWORD } = process.env
+    if (!DB_HOST || !DB_NAME) {
+      throw new Error("PostgreSQL env vars (DB_HOST, DB_NAME) not set — check .env.local")
+    }
+
+    const conn = postgres({
+      host: DB_HOST,
+      port: Number(DB_PORT) || 5432,
+      database: DB_NAME,
+      username: DB_USERNAME,
+      password: DB_PASSWORD
+    })
+    const d = fromPostgresJs(conn)
+
+    const rows = await d.query("SELECT 1 as n")
+    expect(rows).toHaveLength(1)
+
+    await d.close()
+
+    await expect(d.query("SELECT 1 as n")).rejects.toThrow()
   })
 })

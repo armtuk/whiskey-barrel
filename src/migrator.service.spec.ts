@@ -2,14 +2,15 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import Database from "better-sqlite3"
-import { Effect, Layer, Stream } from "effect"
+import { Effect, Layer } from "effect"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
-import { EvolutionFileParserLive } from "./evolution.parser.js"
-import { EvolutionRepositoryLive } from "./evolution.repository.js"
+import { fromBetterSqlite3 } from "./drivers/better-sqlite3.driver.ts"
+import { EvolutionFileParserLive } from "./evolution.parser.ts"
+import { EvolutionRepositoryLive } from "./evolution.repository.ts"
 import { EvolutionFileServiceLive, FileLineReader } from "./evolution-file.service.ts"
-import { MigratorService, MigratorServiceLive } from "./migrator.service.js"
-import type { MigratorOptions } from "./types.js"
-import { fromBetterSqlite3, SqlRunner } from "./util/sql-runner.js"
+import { MigratorService, MigratorServiceLive } from "./migrator.service.ts"
+import type { MigratorOptions } from "./types.ts"
+import { fromMigrationDriver, SqlRunner } from "./util/sql-runner.ts"
 
 // ── Fixtures ───────────────────────────────────────────────────────────────────
 
@@ -38,13 +39,13 @@ const createTestEnv = (): TestEnv => {
     dbName: "testdb",
     dbType: "sqlite",
     evolutionsRoot,
-    tableName: "db_evolutions"
+    tableName: "db_evolutions",
+    verbose: false
   }
 
-  const SqlRunnerLive = Layer.succeed(SqlRunner, fromBetterSqlite3(db))
+  const SqlRunnerLive = Layer.succeed(SqlRunner, fromMigrationDriver(fromBetterSqlite3(db)))
 
   const FileLineReaderLive = Layer.succeed(FileLineReader, {
-    lineStreamFromFile: (path: string) => Effect.sync(() => Stream.fromIterable(readFileSync(path, "utf-8").split("\n"))),
     linesFromFile: (path: string) => Effect.sync(() => readFileSync(path, "utf-8").split("\n"))
   })
 
@@ -138,12 +139,12 @@ describe("MigratorService.apply()", () => {
       dbName: "testdb",
       dbType: "sqlite",
       evolutionsRoot: customRoot,
-      tableName: "my_migrations"
+      tableName: "my_migrations",
+      verbose: false
     }
 
-    const SqlRunnerLayer = Layer.succeed(SqlRunner, fromBetterSqlite3(customDb))
+    const SqlRunnerLayer = Layer.succeed(SqlRunner, fromMigrationDriver(fromBetterSqlite3(customDb)))
     const FileLineReaderLayer = Layer.succeed(FileLineReader, {
-      lineStreamFromFile: (path: string) => Effect.sync(() => Stream.fromIterable(readFileSync(path, "utf-8").split("\n"))),
       linesFromFile: (path: string) => Effect.sync(() => readFileSync(path, "utf-8").split("\n"))
     })
     const RepoLayer = EvolutionRepositoryLive("my_migrations").pipe(Layer.provide(SqlRunnerLayer))

@@ -3,7 +3,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { Effect } from "effect"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
-import { resolveEvolutionFiles } from "./evolution.resolver.js"
+import { resolveEvolutionFiles } from "./evolution.resolver.ts"
 
 let tmpDir: string
 

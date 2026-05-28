@@ -1,6 +1,6 @@
 import { Effect } from "effect"
 import { describe, expect, it } from "vitest"
-import { EvolutionFileParser, EvolutionFileParserLive } from "./evolution.parser.js"
+import { EvolutionFileParser, EvolutionFileParserLive } from "./evolution.parser.ts"
 
 const parserLayer = EvolutionFileParserLive()
 
