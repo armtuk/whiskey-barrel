@@ -69,7 +69,7 @@ export class MigratorService extends Context.Tag("MigratorService")<
 
 // ── Service ────────────────────────────────────────────────────────────────────
 export const MigratorServiceLive = (options: MigratorOptions) => {
-  const logLevel = options.verbose ? LogLevel.Info : LogLevel.Warning
+  const logLevel = options.quiet ? LogLevel.Warning : LogLevel.Info
   return Layer.effect(
     MigratorService,
     Effect.gen(function* () {
@@ -154,8 +154,13 @@ export const MigratorServiceLive = (options: MigratorOptions) => {
           }
           yield* Effect.logInfo("Database state is clean")
 
+          yield* Effect.logInfo(`Scanning ${options.evolutionsRoot}/${options.dbName} for evolution files`)
           const files = yield* fileService.fetchEvolutions()
-          yield* Effect.logInfo(`Found ${files.length} evolution file(s)`)
+          if (files.length === 0) {
+            yield* Effect.logWarning(`No evolution files found in ${options.evolutionsRoot}/${options.dbName} — nothing to apply`)
+            return applyResult.noop()
+          }
+          yield* Effect.logInfo(`Found ${files.length} evolution file(s): ${files.map(f => `${f.id}.sql`).join(", ")}`)
 
           const records = yield* fetchAllRecords()
           yield* Effect.logInfo(`${records.length} evolution(s) already applied`)

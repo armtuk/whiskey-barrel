@@ -30,23 +30,23 @@ interface EvolutionsConfig {
 export interface CommandLineArguments {
   command: string
   args: string[]
-  verbose: boolean
+  quiet: boolean
 }
 
 // ── Argv Parsing ──────────────────────────────────────────────────────────────
 
 export const parseArgs = (): CommandLineArguments => {
   const argv = process.argv.slice(2)
-  const verbose = argv.includes("--verbose") || argv.includes("-v")
-  const positional = argv.filter(a => a !== "--verbose" && a !== "-v")
+  const quiet = argv.includes("--quiet") || argv.includes("-q")
+  const positional = argv.filter(a => a !== "--quiet" && a !== "-q")
   const [command, ...args] = positional
 
   if (!command || command === "--help" || command === "-h") {
-    console.log("Usage: db-evolutions [--verbose|-v] <apply | status | resolve <id>>")
+    console.log("Usage: db-evolutions [--quiet|-q] <apply | status | resolve <id>>")
     process.exit(command ? 0 : 1)
   }
 
-  return { command, args, verbose }
+  return { command, args, quiet }
 }
 
 // ── Config Loading ────────────────────────────────────────────────────────────
@@ -166,10 +166,15 @@ export const resolveCommand = (ServiceLive: ReturnType<typeof buildLayers>, args
 // ── Main ──────────────────────────────────────────────────────────────────────
 
 const main = async (): Promise<void> => {
-  const { command, args, verbose } = parseArgs()
+  const { command, args, quiet } = parseArgs()
 
   const config = await Effect.runPromise(loadConfig())
-  config.options = { ...config.options, verbose }
+  config.options = { ...config.options, quiet }
+
+  const connectionDescription = config.connection.type === "postgresql"
+    ? `postgresql://${config.connection.user ?? ""}@${config.connection.host}:${config.connection.port}/${config.connection.database}`
+    : `sqlite://${config.connection.path}`
+  console.error(`Connecting to ${connectionDescription}`)
 
   const driver = await createDriverFromConfig(config.connection)
   const sqlRunner = fromMigrationDriver(driver)

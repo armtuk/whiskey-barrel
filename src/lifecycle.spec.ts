@@ -29,7 +29,7 @@ describe("driver lifecycle (close releases connection)", () => {
       dbType: "sqlite",
       evolutionsRoot,
       tableName: "db_evolutions",
-      verbose: false
+      quiet: true
     }
 
     const SqlRunnerLive = Layer.succeed(SqlRunner, sqlRunner)

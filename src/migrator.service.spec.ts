@@ -40,7 +40,7 @@ const createTestEnv = (): TestEnv => {
     dbType: "sqlite",
     evolutionsRoot,
     tableName: "db_evolutions",
-    verbose: false
+    quiet: true
   }
 
   const SqlRunnerLive = Layer.succeed(SqlRunner, fromMigrationDriver(fromBetterSqlite3(db)))
@@ -140,7 +140,7 @@ describe("MigratorService.apply()", () => {
       dbType: "sqlite",
       evolutionsRoot: customRoot,
       tableName: "my_migrations",
-      verbose: false
+      quiet: true
     }
 
     const SqlRunnerLayer = Layer.succeed(SqlRunner, fromMigrationDriver(fromBetterSqlite3(customDb)))

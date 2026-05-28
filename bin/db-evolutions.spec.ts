@@ -103,31 +103,31 @@ describe("parseArgs", () => {
   it("parses a simple command", () => {
     process.argv = ["node", "db-evolutions.ts", "apply"]
     const result = parseArgs()
-    expect(result).toEqual({ command: "apply", args: [], verbose: false })
+    expect(result).toEqual({ command: "apply", args: [], quiet: false })
   })
 
   it("parses command with arguments", () => {
     process.argv = ["node", "db-evolutions.ts", "resolve", "42"]
     const result = parseArgs()
-    expect(result).toEqual({ command: "resolve", args: ["42"], verbose: false })
+    expect(result).toEqual({ command: "resolve", args: ["42"], quiet: false })
   })
 
-  it("extracts --verbose flag", () => {
-    process.argv = ["node", "db-evolutions.ts", "--verbose", "apply"]
+  it("extracts --quiet flag to suppress output", () => {
+    process.argv = ["node", "db-evolutions.ts", "--quiet", "apply"]
     const result = parseArgs()
-    expect(result).toEqual({ command: "apply", args: [], verbose: true })
+    expect(result).toEqual({ command: "apply", args: [], quiet: true })
   })
 
   it("extracts -v flag", () => {
-    process.argv = ["node", "db-evolutions.ts", "-v", "status"]
+    process.argv = ["node", "db-evolutions.ts", "-q", "status"]
     const result = parseArgs()
-    expect(result).toEqual({ command: "status", args: [], verbose: true })
+    expect(result).toEqual({ command: "status", args: [], quiet: true })
   })
 
-  it("verbose flag works after command", () => {
-    process.argv = ["node", "db-evolutions.ts", "apply", "--verbose"]
+  it("quiet flag works after command", () => {
+    process.argv = ["node", "db-evolutions.ts", "apply", "--quiet"]
     const result = parseArgs()
-    expect(result).toEqual({ command: "apply", args: [], verbose: true })
+    expect(result).toEqual({ command: "apply", args: [], quiet: true })
   })
 
   it("calls process.exit for --help", () => {
@@ -170,7 +170,7 @@ describe("command integration", () => {
       dbType: "sqlite",
       evolutionsRoot,
       tableName: "db_evolutions",
-      verbose: false
+      quiet: false
     }
 
     const SqlRunnerLive = Layer.succeed(SqlRunner, sqlRunner)
