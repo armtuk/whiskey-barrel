@@ -173,11 +173,57 @@ describe("db-evolutions CLI (end-to-end)", () => {
       expect(result.exitCode).toBe(0)
       expect(result.stderr).toContain("All evolutions up to date")
     })
+
+    it("exits 1 with descriptive error when SQL is invalid", () => {
+      const BAD_SQL = "-- #### !Ups\nCREAT TABL broken;\n-- #### !Downs\nDROP TABLE broken;"
+      project.writeEvolution(1, BAD_SQL)
+
+      const result = project.run(["apply"])
+
+      expect(result.exitCode).toBe(1)
+      expect(result.stderr).toContain("Evolution 1 up failed")
+      expect(result.stdout).toContain("ApplyFailureResult")
+    })
+
+    it("records last_problem in db when SQL fails", () => {
+      const BAD_SQL = "-- #### !Ups\nCREAT TABL broken;\n-- #### !Downs\nDROP TABLE broken;"
+      project.writeEvolution(1, BAD_SQL)
+      project.run(["apply"])
+
+      const db = new Database(project.dbPath)
+      const row = db.prepare("SELECT state, last_problem FROM db_evolutions WHERE id = 1").get() as { state: string; last_problem: string | null }
+      expect(row.state).toBe("applying_up")
+      expect(row.last_problem).toBeTruthy()
+      expect(row.last_problem!.length).toBeGreaterThan(5)
+      db.close()
+    })
+
+    it("applies valid evolutions before the broken one", () => {
+      project.writeEvolution(1, SQL_1)
+      project.writeEvolution(2, "-- #### !Ups\nBAD SQL;\n-- #### !Downs\nSELECT 1;")
+      const result = project.run(["apply"])
+
+      expect(result.exitCode).toBe(1)
+      expect(result.stderr).toContain("Evolution 2 up failed")
+
+      const db = new Database(project.dbPath)
+      const rows = db.prepare("SELECT id, state FROM db_evolutions ORDER BY id").all() as { id: number; state: string }[]
+      expect(rows[0].state).toBe("applied")
+      expect(rows[1].state).toBe("applying_up")
+      db.close()
+    })
   })
 
   // ── status command ────────────────────────────────────────────────────────
 
   describe("status", () => {
+    it("handles missing evolutions table gracefully", () => {
+      const result = project.run(["status"])
+
+      expect(result.exitCode).toBe(0)
+      expect(result.stdout).toContain("No evolutions table found")
+    })
+
     it("reports no evolutions on a fresh database", () => {
       project.run(["apply"])
 

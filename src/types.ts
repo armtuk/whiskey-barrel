@@ -176,6 +176,25 @@ export class NotFoundError extends Data.TaggedError("NotFoundError")<{
   readonly content: unknown
 }> {}
 
+export class MigrationExecError extends Data.TaggedError("MigrationExecError")<{
+  readonly evolutionId: number
+  readonly direction: "up" | "down"
+  readonly detail: string
+}> {
+  override get message(): string {
+    return `Evolution ${this.evolutionId} ${this.direction} failed: ${this.detail}`
+  }
+}
+
+export const extractErrorMessage = (err: unknown): string => {
+  const inner = err && typeof err === "object" && "error" in err
+    ? (err as { error: unknown }).error
+    : err
+  if (inner instanceof Error) return inner.message
+  if (typeof inner === "string") return inner
+  return String(inner)
+}
+
 /**
  * Holds a record where the evlutions may have potentiall diverged
  */

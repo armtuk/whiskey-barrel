@@ -4,7 +4,7 @@
 
 import { config as loadEnv } from "dotenv"
 import { NodeFileSystem } from "@effect/platform-node"
-import { Effect, Layer, pipe } from "effect"
+import { Cause, Effect, Layer, Option, pipe } from "effect"
 import { createJiti } from "jiti"
 import type { MigratorOptionsInput } from "../src/index.ts"
 import {
@@ -19,7 +19,7 @@ import {
   MigratorServiceLive,
   SqlRunner
 } from "../src/index.ts"
-import { connectionConfigValidator, describeConnectionUrl, migratorOptionsValidator } from "../src/types.ts"
+import { connectionConfigValidator, describeConnectionUrl, extractErrorMessage, migratorOptionsValidator } from "../src/types.ts"
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -122,10 +122,13 @@ const printStatusReport = (report: StatusReport): void => {
   if (report.lastEvolution) {
     if (report.lastEvolution.state === evolutionState.applied) {
       console.log(`Last evolution: #${report.lastEvolution.id} — applied successfully at ${new Date(report.lastEvolution.appliedAt).toLocaleString()}`)
+      if (report.lastEvolution.lastProblem) {
+        console.log(`  Previous error (now resolved): ${report.lastEvolution.lastProblem}`)
+      }
     } else {
       console.log(`Last evolution: #${report.lastEvolution.id} — state: ${report.lastEvolution.state}`)
       if (report.lastEvolution.lastProblem) {
-        console.log(`Error: ${report.lastEvolution.lastProblem}`)
+        console.log(`  Error: ${report.lastEvolution.lastProblem}`)
       }
     }
   }
@@ -133,7 +136,11 @@ const printStatusReport = (report: StatusReport): void => {
   if (report.stuckEvolutions.length > 0) {
     console.log(`\n${report.stuckEvolutions.length} stuck evolution(s):`)
     report.stuckEvolutions.forEach(r => {
-      console.log(`  #${r.id} — ${r.state}${r.lastProblem ? `: ${r.lastProblem}` : ""}`)
+      console.log(`  #${r.id} — ${r.state}`)
+      if (r.lastProblem) {
+        console.log(`    Error: ${r.lastProblem}`)
+      }
+      console.log(`    Run 'db-evolutions resolve ${r.id}' after fixing the issue.`)
     })
   }
 }
@@ -142,14 +149,33 @@ export const applyCommand = (ServiceLive: ReturnType<typeof buildLayers>) =>
   Effect.provide(
     Effect.flatMap(MigratorService, svc => svc.apply()),
     ServiceLive
-  ).pipe(Effect.map(result => console.log(JSON.stringify(result, null, 2))))
+  ).pipe(Effect.map(result => {
+    console.log(JSON.stringify(result, null, 2))
+    if (result._tag === "ApplyFailureResult") {
+      console.error(`\nError: ${result.error}`)
+      if (result.evolutionRecord) {
+        console.error(`Evolution #${result.evolutionRecord.id} is stuck in state '${result.evolutionRecord.state}'.`)
+        console.error(`Run 'db-evolutions resolve ${result.evolutionRecord.id}' after fixing the issue.`)
+      }
+      process.exit(1)
+    }
+  }))
 
 export const statusCommand = (sqlRunner: SqlRunner["Type"], tableName: string) =>
   sqlRunner.query<EvolutionStatusRow>(
     `SELECT id, state, last_problem, applied_at FROM ${tableName} ORDER BY id`
   ).pipe(
     Effect.map(buildStatusReport),
-    Effect.map(printStatusReport)
+    Effect.map(printStatusReport),
+    Effect.catchAll(err => Effect.sync(() => {
+      const msg = extractErrorMessage(err)
+      if (msg.includes("no such table") || msg.includes("does not exist")) {
+        console.log("No evolutions table found. Run 'db-evolutions apply' to initialize.")
+      } else {
+        console.error(`Error querying status: ${msg}`)
+        process.exit(1)
+      }
+    }))
   )
 
 export const resolveCommand = (ServiceLive: ReturnType<typeof buildLayers>, args: string[]) => {
@@ -226,12 +252,19 @@ const main = async (): Promise<void> => {
 const isDirectExecution = process.argv[1]?.endsWith("db-evolutions.ts") || process.argv[1]?.endsWith("db-evolutions.js")
 if (isDirectExecution) {
   main().catch(err => {
-    if (err instanceof Error) {
+    const causeSymbol = Object.getOwnPropertySymbols(err).find(s => s.toString().includes("FiberFailure/Cause"))
+    if (causeSymbol) {
+      const cause = err[causeSymbol]
+      const failure = Cause.failureOption(cause)
+      if (Option.isSome(failure)) {
+        console.error(`Error: ${extractErrorMessage(failure.value)}`)
+      } else {
+        console.error(Cause.pretty(cause))
+      }
+    } else if (err instanceof Error) {
       console.error(`Error: ${err.message}`)
-    } else if (typeof err === "object" && err !== null && "_tag" in err) {
-      console.error(`Error [${err._tag}]: ${JSON.stringify(err, null, 2)}`)
     } else {
-      console.error("Error:", err)
+      console.error("Error:", String(err))
     }
     process.exit(1)
   })

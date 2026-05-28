@@ -47,7 +47,8 @@ export const EvolutionFileServiceLive = (options: MigratorOptions) =>
                 ...x,
                 id: fileRef.id
               }) as Evolution
-          )
+          ),
+          Effect.tapError(err => Effect.logWarning(`Failed to parse ${fileRef.filePath}: ${err instanceof Error ? err.message : JSON.stringify(err)}`))
         )
 
       const fetchEvolutions = () =>

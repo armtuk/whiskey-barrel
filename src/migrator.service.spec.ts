@@ -117,6 +117,49 @@ describe("MigratorService.apply()", () => {
     expect(countRows(env.db, "db_evolutions")).toBe(2)
   })
 
+  it("returns ApplyFailureResult with DB error when SQL is invalid", async () => {
+    const BAD_SQL = "-- #### !Ups\nCREAT TABL broken_syntax;\n-- #### !Downs\nDROP TABLE broken_syntax;"
+    env.writeFile("1.sql", BAD_SQL)
+
+    const result = await env.run(Effect.flatMap(MigratorService, svc => svc.apply()))
+
+    expect(result._tag).toBe("ApplyFailureResult")
+    if (result._tag === "ApplyFailureResult") {
+      expect(result.error).toContain("Evolution 1 up failed")
+      expect(result.error.length).toBeGreaterThan(30)
+    }
+  })
+
+  it("records last_problem in db_evolutions when SQL fails", async () => {
+    const BAD_SQL = "-- #### !Ups\nCREAT TABL broken;\n-- #### !Downs\nDROP TABLE broken;"
+    env.writeFile("1.sql", BAD_SQL)
+
+    await env.run(Effect.flatMap(MigratorService, svc => svc.apply()))
+
+    const row = env.db.prepare("SELECT state, last_problem FROM db_evolutions WHERE id = 1").get() as { state: string; last_problem: string | null }
+    expect(row).toBeTruthy()
+    expect(row.state).toBe("applying_up")
+    expect(row.last_problem).toBeTruthy()
+    expect(row.last_problem!.length).toBeGreaterThan(5)
+  })
+
+  it("applies earlier evolutions and fails on the broken one", async () => {
+    const BAD_SQL_2 = "-- #### !Ups\nINVALID SQL HERE;\n-- #### !Downs\nSELECT 1;"
+    env.writeFile("1.sql", SQL_1)
+    env.writeFile("2.sql", BAD_SQL_2)
+
+    const result = await env.run(Effect.flatMap(MigratorService, svc => svc.apply()))
+
+    expect(result._tag).toBe("ApplyFailureResult")
+    if (result._tag === "ApplyFailureResult") {
+      expect(result.error).toContain("Evolution 2 up failed")
+    }
+    const rows = env.db.prepare("SELECT id, state FROM db_evolutions ORDER BY id").all() as { id: number; state: string }[]
+    expect(rows).toHaveLength(2)
+    expect(rows[0].state).toBe("applied")
+    expect(rows[1].state).toBe("applying_up")
+  })
+
   it("returns failure when stuck evolution is detected", async () => {
     env.writeFile("1.sql", SQL_1)
     await env.run(Effect.flatMap(MigratorService, svc => svc.apply()))

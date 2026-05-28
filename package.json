@@ -1,6 +1,6 @@
 {
   "name": "@alexrmturner/whiskey-barrel",
-  "version": "0.1.10",
+  "version": "0.1.15",
   "description": "Play Framework-style database evolutions for Node.js",
   "repository": {
     "type": "git",
@@ -73,7 +73,8 @@
     "lint": "biome lint --write src",
     "format": "biome format --write src",
     "check": "biome check --write src",
-    "prepublishOnly": "pnpm typecheck && pnpm build"
+    "prepublishOnly": "pnpm typecheck && pnpm build",
+    "release": "bash scripts/publish.sh"
   },
   "dependencies": {
     "@effect/platform": "^0.96.1",
