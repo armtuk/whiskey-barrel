@@ -2,6 +2,7 @@
 
 // biome-ignore-all lint/suspicious/noConsole: CLI entrypoint uses console for user output
 
+import { config as loadEnv } from "dotenv"
 import { NodeFileSystem } from "@effect/platform-node"
 import { Effect, Layer, pipe } from "effect"
 import { createJiti } from "jiti"
@@ -167,6 +168,9 @@ export const resolveCommand = (ServiceLive: ReturnType<typeof buildLayers>, args
 
 const main = async (): Promise<void> => {
   const { command, args, quiet } = parseArgs()
+
+  loadEnv()
+  loadEnv({ path: ".env.local", override: true })
 
   const config = await Effect.runPromise(loadConfig())
   config.options = { ...config.options, quiet }
