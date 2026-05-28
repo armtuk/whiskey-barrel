@@ -17,16 +17,16 @@ jobs:
       - checkout
       - run:
           name: Install pnpm
-          command: corepack enable && corepack prepare pnpm@9 --activate
+          command: corepack enable && corepack install
       - restore_cache:
           keys:
-            - pnpm-deps-{{ checksum "pnpm-lock.yaml" }}
-            - pnpm-deps-
+            - pnpm-deps-v2-{{ checksum "pnpm-lock.yaml" }}
+            - pnpm-deps-v2-
       - run:
           name: Install dependencies
           command: pnpm install --frozen-lockfile
       - save_cache:
-          key: pnpm-deps-{{ checksum "pnpm-lock.yaml" }}
+          key: pnpm-deps-v2-{{ checksum "pnpm-lock.yaml" }}
           paths:
             - node_modules
       - run:
@@ -64,10 +64,10 @@ jobs:
           at: .
       - run:
           name: Install pnpm
-          command: corepack enable && corepack prepare pnpm@9 --activate
+          command: corepack enable && corepack install
       - restore_cache:
           keys:
-            - pnpm-deps-{{ checksum "pnpm-lock.yaml" }}
+            - pnpm-deps-v2-{{ checksum "pnpm-lock.yaml" }}
       - run:
           name: Install dependencies
           command: pnpm install --frozen-lockfile

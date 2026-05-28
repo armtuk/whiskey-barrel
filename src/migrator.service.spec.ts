@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs"
+import { mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import Database from "better-sqlite3"
@@ -17,7 +17,8 @@ import { fromMigrationDriver, SqlRunner } from "./util/sql-runner.ts"
 const SQL_1 = "-- #### !Ups\nCREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT);\n-- #### !Downs\nDROP TABLE users;"
 const SQL_2 = "-- #### !Ups\nCREATE TABLE posts (id INTEGER PRIMARY KEY, title TEXT);\n-- #### !Downs\nDROP TABLE posts;"
 const SQL_3 = "-- #### !Ups\nCREATE TABLE tags (id INTEGER PRIMARY KEY, label TEXT);\n-- #### !Downs\nDROP TABLE tags;"
-const SQL_2_CHANGED = "-- #### !Ups\nCREATE TABLE posts (id INTEGER PRIMARY KEY, title TEXT, body TEXT);\n-- #### !Downs\nDROP TABLE posts;"
+const _SQL_2_CHANGED =
+  "-- #### !Ups\nCREATE TABLE posts (id INTEGER PRIMARY KEY, title TEXT, body TEXT);\n-- #### !Downs\nDROP TABLE posts;"
 
 // ── Test Helpers ──────────────────────────────────────────────────────────────
 
@@ -40,7 +41,7 @@ const createTestEnv = (): TestEnv => {
     dbType: "sqlite",
     evolutionsRoot,
     tableName: "db_evolutions",
-    verbose: false
+    quiet: true
   }
 
   const SqlRunnerLive = Layer.succeed(SqlRunner, fromMigrationDriver(fromBetterSqlite3(db)))
@@ -117,6 +118,52 @@ describe("MigratorService.apply()", () => {
     expect(countRows(env.db, "db_evolutions")).toBe(2)
   })
 
+  it("returns ApplyFailureResult with DB error when SQL is invalid", async () => {
+    const BAD_SQL = "-- #### !Ups\nCREAT TABL broken_syntax;\n-- #### !Downs\nDROP TABLE broken_syntax;"
+    env.writeFile("1.sql", BAD_SQL)
+
+    const result = await env.run(Effect.flatMap(MigratorService, svc => svc.apply()))
+
+    expect(result._tag).toBe("ApplyFailureResult")
+    if (result._tag === "ApplyFailureResult") {
+      expect(result.error).toContain("Evolution 1 up failed")
+      expect(result.error.length).toBeGreaterThan(30)
+    }
+  })
+
+  it("records last_problem in db_evolutions when SQL fails", async () => {
+    const BAD_SQL = "-- #### !Ups\nCREAT TABL broken;\n-- #### !Downs\nDROP TABLE broken;"
+    env.writeFile("1.sql", BAD_SQL)
+
+    await env.run(Effect.flatMap(MigratorService, svc => svc.apply()))
+
+    const row = env.db.prepare("SELECT state, last_problem FROM db_evolutions WHERE id = 1").get() as {
+      state: string
+      last_problem: string | null
+    }
+    expect(row).toBeTruthy()
+    expect(row.state).toBe("applying_up")
+    expect(row.last_problem).toBeTruthy()
+    expect(row.last_problem?.length).toBeGreaterThan(5)
+  })
+
+  it("applies earlier evolutions and fails on the broken one", async () => {
+    const BAD_SQL_2 = "-- #### !Ups\nINVALID SQL HERE;\n-- #### !Downs\nSELECT 1;"
+    env.writeFile("1.sql", SQL_1)
+    env.writeFile("2.sql", BAD_SQL_2)
+
+    const result = await env.run(Effect.flatMap(MigratorService, svc => svc.apply()))
+
+    expect(result._tag).toBe("ApplyFailureResult")
+    if (result._tag === "ApplyFailureResult") {
+      expect(result.error).toContain("Evolution 2 up failed")
+    }
+    const rows = env.db.prepare("SELECT id, state FROM db_evolutions ORDER BY id").all() as { id: number; state: string }[]
+    expect(rows).toHaveLength(2)
+    expect(rows[0].state).toBe("applied")
+    expect(rows[1].state).toBe("applying_up")
+  })
+
   it("returns failure when stuck evolution is detected", async () => {
     env.writeFile("1.sql", SQL_1)
     await env.run(Effect.flatMap(MigratorService, svc => svc.apply()))
@@ -140,7 +187,7 @@ describe("MigratorService.apply()", () => {
       dbType: "sqlite",
       evolutionsRoot: customRoot,
       tableName: "my_migrations",
-      verbose: false
+      quiet: true
     }
 
     const SqlRunnerLayer = Layer.succeed(SqlRunner, fromMigrationDriver(fromBetterSqlite3(customDb)))
@@ -165,6 +212,110 @@ describe("MigratorService.apply()", () => {
     expect(result._tag).toBe("ApplySuccessResult")
     expect(countRows(customDb, "my_migrations")).toBe(1)
     customDb.close()
+  })
+})
+
+describe("MigratorService.status()", () => {
+  let env: TestEnv
+
+  beforeEach(() => {
+    env = createTestEnv()
+  })
+  afterEach(() => {
+    env.db.close()
+  })
+
+  it("returns success with 0 applied and no divergences on empty DB", async () => {
+    const result = await env.run(Effect.flatMap(MigratorService, svc => svc.status()))
+
+    expect(result._tag).toBe("success")
+    if (result._tag === "success") {
+      expect(result.appliedCount).toBe(0)
+      expect(result.divergences).toEqual([])
+    }
+  })
+
+  it("returns correct appliedCount and no divergences when all files match", async () => {
+    env.writeFile("1.sql", SQL_1)
+    env.writeFile("2.sql", SQL_2)
+    await env.run(Effect.flatMap(MigratorService, svc => svc.apply()))
+
+    const result = await env.run(Effect.flatMap(MigratorService, svc => svc.status()))
+
+    expect(result._tag).toBe("success")
+    if (result._tag === "success") {
+      expect(result.appliedCount).toBe(2)
+      expect(result.divergences).toEqual([])
+    }
+  })
+
+  it("detects new file divergence when file exists but no record", async () => {
+    env.writeFile("1.sql", SQL_1)
+    await env.run(Effect.flatMap(MigratorService, svc => svc.apply()))
+
+    env.writeFile("2.sql", SQL_2)
+    const result = await env.run(Effect.flatMap(MigratorService, svc => svc.status()))
+
+    expect(result._tag).toBe("success")
+    if (result._tag === "success") {
+      expect(result.appliedCount).toBe(1)
+      expect(result.divergences).toHaveLength(1)
+      expect(result.divergences[0].id).toBe(2)
+      expect(result.divergences[0].type).toBe("new")
+      expect(result.divergences[0].fileHash).toBeDefined()
+    }
+  })
+
+  it("detects changed hash divergence when file content differs from record", async () => {
+    env.writeFile("1.sql", SQL_1)
+    env.writeFile("2.sql", SQL_2)
+    await env.run(Effect.flatMap(MigratorService, svc => svc.apply()))
+
+    env.writeFile("2.sql", _SQL_2_CHANGED)
+    const result = await env.run(Effect.flatMap(MigratorService, svc => svc.status()))
+
+    expect(result._tag).toBe("success")
+    if (result._tag === "success") {
+      expect(result.appliedCount).toBe(2)
+      expect(result.divergences).toHaveLength(1)
+      expect(result.divergences[0].id).toBe(2)
+      expect(result.divergences[0].type).toBe("changed")
+      expect(result.divergences[0].fileHash).toBeDefined()
+      expect(result.divergences[0].recordHash).toBeDefined()
+      expect(result.divergences[0].fileHash).not.toBe(result.divergences[0].recordHash)
+    }
+  })
+
+  it("detects removed file divergence when record exists but file deleted", async () => {
+    env.writeFile("1.sql", SQL_1)
+    env.writeFile("2.sql", SQL_2)
+    await env.run(Effect.flatMap(MigratorService, svc => svc.apply()))
+
+    unlinkSync(join(env.evolutionsRoot, "testdb", "2.sql"))
+    const result = await env.run(Effect.flatMap(MigratorService, svc => svc.status()))
+
+    expect(result._tag).toBe("success")
+    if (result._tag === "success") {
+      expect(result.appliedCount).toBe(2)
+      expect(result.divergences).toHaveLength(1)
+      expect(result.divergences[0].id).toBe(2)
+      expect(result.divergences[0].type).toBe("removed")
+      expect(result.divergences[0].recordHash).toBeDefined()
+    }
+  })
+
+  it("returns stuck result when evolution is stuck", async () => {
+    env.writeFile("1.sql", SQL_1)
+    await env.run(Effect.flatMap(MigratorService, svc => svc.apply()))
+    env.db.prepare("UPDATE db_evolutions SET state = 'applying_up', last_problem = 'test error' WHERE id = 1").run()
+
+    const result = await env.run(Effect.flatMap(MigratorService, svc => svc.status()))
+
+    expect(result._tag).toBe("stuck")
+    if (result._tag === "stuck") {
+      expect(result.evolutionRecord.id).toBe(1)
+      expect(result.message).toBe("test error")
+    }
   })
 })
 

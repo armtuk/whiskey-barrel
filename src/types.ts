@@ -48,34 +48,32 @@ export const dbType: Record<(typeof dbTypes)[number], (typeof dbTypes)[number]> 
 
 export type DbType = (typeof dbTypes)[number]
 
-export const postgresqlConnectionConfigValidator = z
-  .object({
-    type: z.literal("postgresql"),
-    host: z.string(),
-    port: z.number().int().positive().default(5432),
-    database: z.string(),
-    user: z.string().optional(),
-    password: z.string().optional(),
-    connectionString: z.string().optional(),
-    ssl: z.boolean().optional()
-  })
-  .strict()
+export const connectionConfigValidator = z
+  .string()
+  .url()
+  .refine(
+    url => {
+      const scheme = new URL(url).protocol
+      return scheme === "postgresql:" || scheme === "postgres:" || scheme === "sqlite:"
+    },
+    { message: "Connection URL must use postgresql://, postgres://, or sqlite:// scheme" }
+  )
 
-export const sqliteConnectionConfigValidator = z
-  .object({
-    type: z.literal("sqlite"),
-    path: z.string()
-  })
-  .strict()
-
-export const connectionConfigValidator = z.discriminatedUnion("type", [
-  postgresqlConnectionConfigValidator,
-  sqliteConnectionConfigValidator
-])
-
-export type PostgresqlConnectionConfig = z.infer<typeof postgresqlConnectionConfigValidator>
-export type SqliteConnectionConfig = z.infer<typeof sqliteConnectionConfigValidator>
 export type ConnectionConfig = z.infer<typeof connectionConfigValidator>
+
+export const parseConnectionUrl = (url: string): { scheme: "postgresql" | "sqlite"; url: URL } => {
+  const parsed = new URL(url)
+  const scheme = parsed.protocol === "sqlite:" ? ("sqlite" as const) : ("postgresql" as const)
+  return { scheme, url: parsed }
+}
+
+export const describeConnectionUrl = (url: string): string => {
+  const parsed = new URL(url)
+  if (parsed.password) {
+    return url.replace(`:${parsed.password}@`, ":***@")
+  }
+  return url
+}
 
 export const migratorOptionsValidator = z
   .object({
@@ -86,7 +84,7 @@ export const migratorOptionsValidator = z
       .string()
       .regex(/^[a-zA-Z_][a-zA-Z0-9_]*$/, "tableName must be a valid SQL identifier")
       .default("db_evolutions"),
-    verbose: z.boolean().default(false)
+    quiet: z.boolean().default(false)
   })
   .strict()
 
@@ -98,8 +96,19 @@ export const defineConfig = (config: MigratorOptionsInput): MigratorOptionsInput
 
 // ── Result Types ───────────────────────────────────────────────────────────────
 
+export type DivergenceType = "changed" | "new" | "removed"
+
+export interface EvolutionDivergence {
+  id: number
+  type: DivergenceType
+  fileHash?: string
+  recordHash?: string
+}
+
 export interface StatusSuccessResult {
   _tag: "success"
+  appliedCount: number
+  divergences: EvolutionDivergence[]
 }
 
 export interface StatusStuckResult {
@@ -180,6 +189,23 @@ export class InitializationError extends Data.TaggedError("InitializationError")
 export class NotFoundError extends Data.TaggedError("NotFoundError")<{
   readonly content: unknown
 }> {}
+
+export class MigrationExecError extends Data.TaggedError("MigrationExecError")<{
+  readonly evolutionId: number
+  readonly direction: "up" | "down"
+  readonly detail: string
+}> {
+  override get message(): string {
+    return `Evolution ${this.evolutionId} ${this.direction} failed: ${this.detail}`
+  }
+}
+
+export const extractErrorMessage = (err: unknown): string => {
+  const inner = err && typeof err === "object" && "error" in err ? (err as { error: unknown }).error : err
+  if (inner instanceof Error) return inner.message
+  if (typeof inner === "string") return inner
+  return String(inner)
+}
 
 /**
  * Holds a record where the evlutions may have potentiall diverged

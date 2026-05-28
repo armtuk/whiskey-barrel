@@ -10,6 +10,7 @@ export class EvolutionRepository extends Context.Tag("EvolutionRepository")<
     setApplied(r: Evolution | EvolutionRecord): Effect.Effect<void, UnknownException>
     startEvolution(r: Evolution): Effect.Effect<void, UnknownException>
     startDevolution(r: Evolution | EvolutionRecord): Effect.Effect<void, UnknownException>
+    recordError(id: number, error: string): Effect.Effect<void, UnknownException>
   }
 >() {}
 
@@ -41,7 +42,8 @@ export const EvolutionRepositoryLive = (tableName: string) =>
             evolutionState.applyingUp
           ]),
         startDevolution: (r: Evolution | EvolutionRecord) => applyState(r.id, evolutionState.applyingDown),
-        setApplied: (r: Evolution | EvolutionRecord) => applyState(r.id, evolutionState.applied)
+        setApplied: (r: Evolution | EvolutionRecord) => applyState(r.id, evolutionState.applied),
+        recordError: (id: number, error: string) => sqlRunner.exec(`update ${tableName} set last_problem = ? where id = ?`, [error, id])
       }
     })
   )

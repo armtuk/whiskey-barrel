@@ -2,51 +2,51 @@
 
 // biome-ignore-all lint/suspicious/noConsole: CLI entrypoint uses console for user output
 
+import { config as loadEnv } from "dotenv"
 import { NodeFileSystem } from "@effect/platform-node"
-import { Effect, Layer, pipe } from "effect"
+import { Cause, Effect, Layer, Option, pipe } from "effect"
 import { createJiti } from "jiti"
-import type { ConnectionConfig, MigratorOptionsInput } from "../src/index.ts"
+import type { MigratorOptionsInput } from "../src/index.ts"
 import {
   createDriverFromConfig,
   EvolutionFileParserLive,
   EvolutionFileServiceLive,
   EvolutionRepositoryLive,
-  evolutionState,
   FileLineReaderLive,
   fromMigrationDriver,
   MigratorService,
   MigratorServiceLive,
   SqlRunner
 } from "../src/index.ts"
-import { migratorOptionsValidator } from "../src/types.ts"
+import { connectionConfigValidator, describeConnectionUrl, extractErrorMessage, migratorOptionsValidator } from "../src/types.ts"
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 interface EvolutionsConfig {
-  connection: ConnectionConfig
+  connection: string
   options: MigratorOptionsInput
 }
 
 export interface CommandLineArguments {
   command: string
   args: string[]
-  verbose: boolean
+  quiet: boolean
 }
 
 // ── Argv Parsing ──────────────────────────────────────────────────────────────
 
 export const parseArgs = (): CommandLineArguments => {
   const argv = process.argv.slice(2)
-  const verbose = argv.includes("--verbose") || argv.includes("-v")
-  const positional = argv.filter(a => a !== "--verbose" && a !== "-v")
+  const quiet = argv.includes("--quiet") || argv.includes("-q")
+  const positional = argv.filter(a => a !== "--quiet" && a !== "-q")
   const [command, ...args] = positional
 
   if (!command || command === "--help" || command === "-h") {
-    console.log("Usage: db-evolutions [--verbose|-v] <apply | status | resolve <id>>")
+    console.log("Usage: db-evolutions [--quiet|-q] <apply | status | resolve <id>>")
     process.exit(command ? 0 : 1)
   }
 
-  return { command, args, verbose }
+  return { command, args, quiet }
 }
 
 // ── Config Loading ────────────────────────────────────────────────────────────
@@ -58,7 +58,7 @@ const CONFIG_FILENAMES = ["evolutions.config.ts", "evolutions.config.js", "evolu
 const tryLoadConfig = (name: string): Effect.Effect<EvolutionsConfig, Error> =>
   Effect.tryPromise({
     try: () => jiti.import(`${process.cwd()}/${name}`, { default: true }) as Promise<EvolutionsConfig>,
-    catch: () => new Error(`Could not load ${name}`)
+    catch: err => new Error(`Failed to load ${name}: ${err instanceof Error ? err.message : String(err)}`)
   })
 
 const loadConfig = (): Effect.Effect<EvolutionsConfig, Error> =>
@@ -66,7 +66,7 @@ const loadConfig = (): Effect.Effect<EvolutionsConfig, Error> =>
     tryLoadConfig(CONFIG_FILENAMES[0]),
     Effect.orElse(() => tryLoadConfig(CONFIG_FILENAMES[1])),
     Effect.orElse(() => tryLoadConfig(CONFIG_FILENAMES[2])),
-    Effect.mapError(() => new Error("No evolutions.config.ts found in current directory"))
+    Effect.mapError(() => new Error(`No evolutions config found in ${process.cwd()}. Searched for: ${CONFIG_FILENAMES.join(", ")}`))
   )
 
 // ── Layer Construction ────────────────────────────────────────────────────────
@@ -86,74 +86,68 @@ const buildLayers = (config: EvolutionsConfig, sqlRunnerImpl: SqlRunner["Type"])
 
 // ── Commands ──────────────────────────────────────────────────────────────────
 
-interface EvolutionStatusRow {
-  id: number
-  state: string
-  last_problem: string | null
-  applied_at: string
-}
-
-export interface StatusReport {
-  appliedCount: number
-  lastEvolution?: { id: number; state: string; appliedAt: string; lastProblem: string | null }
-  stuckEvolutions: { id: number; state: string; lastProblem: string | null }[]
-}
-
-export const buildStatusReport = (rows: EvolutionStatusRow[]): StatusReport => {
-  if (rows.length === 0) return { appliedCount: 0, stuckEvolutions: [] }
-
-  const last = rows[rows.length - 1]
-  const stuck = rows.filter(r => r.state !== evolutionState.applied)
-  return {
-    appliedCount: rows.length - stuck.length,
-    lastEvolution: { id: last.id, state: last.state, appliedAt: last.applied_at, lastProblem: last.last_problem },
-    stuckEvolutions: stuck.map(r => ({ id: r.id, state: r.state, lastProblem: r.last_problem }))
-  }
-}
-
-const printStatusReport = (report: StatusReport): void => {
-  if (report.appliedCount === 0 && report.stuckEvolutions.length === 0) {
-    console.log("No evolutions applied.")
-    return
-  }
-
-  console.log(`${report.appliedCount} evolution(s) applied.`)
-  if (report.lastEvolution) {
-    if (report.lastEvolution.state === evolutionState.applied) {
-      console.log(`Last evolution: #${report.lastEvolution.id} — applied successfully at ${new Date(report.lastEvolution.appliedAt).toLocaleString()}`)
-    } else {
-      console.log(`Last evolution: #${report.lastEvolution.id} — state: ${report.lastEvolution.state}`)
-      if (report.lastEvolution.lastProblem) {
-        console.log(`Error: ${report.lastEvolution.lastProblem}`)
-      }
-    }
-  }
-
-  if (report.stuckEvolutions.length > 0) {
-    console.log(`\n${report.stuckEvolutions.length} stuck evolution(s):`)
-    report.stuckEvolutions.forEach(r => {
-      console.log(`  #${r.id} — ${r.state}${r.lastProblem ? `: ${r.lastProblem}` : ""}`)
-    })
-  }
-}
-
 export const applyCommand = (ServiceLive: ReturnType<typeof buildLayers>) =>
   Effect.provide(
     Effect.flatMap(MigratorService, svc => svc.apply()),
     ServiceLive
-  ).pipe(Effect.map(result => console.log(JSON.stringify(result, null, 2))))
-
-export const statusCommand = (sqlRunner: SqlRunner["Type"], tableName: string) =>
-  sqlRunner.query<EvolutionStatusRow>(
-    `SELECT id, state, last_problem, applied_at FROM ${tableName} ORDER BY id`
   ).pipe(
-    Effect.map(buildStatusReport),
-    Effect.map(printStatusReport)
+    Effect.tap(result => {
+      console.log(JSON.stringify(result, null, 2))
+      if (result._tag === "ApplyFailureResult") {
+        console.error(`\nError: ${result.error}`)
+        if (result.evolutionRecord) {
+          console.error(`Evolution #${result.evolutionRecord.id} is stuck in state '${result.evolutionRecord.state}'.`)
+          console.error(`Run 'db-evolutions resolve ${result.evolutionRecord.id}' after fixing the issue.`)
+        }
+        process.exit(1)
+      }
+    })
+  )
+
+export const statusCommand = (ServiceLive: ReturnType<typeof buildLayers>) =>
+  Effect.provide(
+    Effect.flatMap(MigratorService, svc => svc.status()),
+    ServiceLive
+  ).pipe(
+    Effect.tap(result => {
+      if (result._tag === "stuck") {
+        console.log("1 stuck evolution:")
+        console.log(`  #${result.evolutionRecord.id} — ${result.evolutionRecord.state}`)
+        if (result.message) console.log(`    Error: ${result.message}`)
+        console.log(`    Run 'db-evolutions resolve ${result.evolutionRecord.id}' after fixing the issue.`)
+        return
+      }
+      if (result._tag === "failure") {
+        console.error(`Error: ${result.error}`)
+        process.exit(1)
+        return
+      }
+      if (result.appliedCount === 0 && result.divergences.length === 0) {
+        console.log("No evolutions applied.")
+        return
+      }
+      console.log(`${result.appliedCount} evolution(s) applied.`)
+      if (result.divergences.length > 0) {
+        console.log(`\n${result.divergences.length} divergence(s) detected:`)
+        for (const d of result.divergences) {
+          if (d.type === "changed") {
+            console.log(`  #${d.id} — hash changed (file: ${d.fileHash?.slice(0, 8)}, record: ${d.recordHash?.slice(0, 8)})`)
+          } else if (d.type === "new") {
+            console.log(`  #${d.id} — new file (not yet applied)`)
+          } else {
+            console.log(`  #${d.id} — file removed (still in database)`)
+          }
+        }
+      } else {
+        console.log("All evolutions up to date.")
+      }
+    })
   )
 
 export const resolveCommand = (ServiceLive: ReturnType<typeof buildLayers>, args: string[]) => {
   const id = parseInt(args[0] ?? "", 10)
   if (Number.isNaN(id)) {
+    console.error(`Invalid evolution id: "${args[0] ?? ""}" — expected a numeric id`)
     console.error("Usage: db-evolutions resolve <id>")
     process.exit(1)
   }
@@ -166,19 +160,45 @@ export const resolveCommand = (ServiceLive: ReturnType<typeof buildLayers>, args
 // ── Main ──────────────────────────────────────────────────────────────────────
 
 const main = async (): Promise<void> => {
-  const { command, args, verbose } = parseArgs()
+  const { command, args, quiet } = parseArgs()
+
+  loadEnv()
+  loadEnv({ path: ".env.local", override: true })
 
   const config = await Effect.runPromise(loadConfig())
-  config.options = { ...config.options, verbose }
+  config.options = { ...config.options, quiet }
 
-  const driver = await createDriverFromConfig(config.connection)
+  let connectionUrl: string
+  try {
+    connectionUrl = connectionConfigValidator.parse(config.connection)
+  } catch (err) {
+    console.error("Invalid connection URL in evolutions.config.")
+    console.error(`Received: ${JSON.stringify(config.connection)}`)
+    console.error(err instanceof Error ? err.message : String(err))
+    process.exit(1)
+  }
+
+  const safeUrl = describeConnectionUrl(connectionUrl)
+  console.error(`Connecting to ${safeUrl}`)
+
+  const driver = await createDriverFromConfig(connectionUrl)
   const sqlRunner = fromMigrationDriver(driver)
+
+  try {
+    await Effect.runPromise(sqlRunner.query("SELECT 1"))
+  } catch (err) {
+    console.error(`Failed to connect to ${safeUrl}`)
+    console.error(err instanceof Error ? err.message : String(err))
+    await driver.close()
+    process.exit(1)
+  }
+
   const options = migratorOptionsValidator.parse(config.options)
   const ServiceLive = buildLayers(config, sqlRunner)
 
   const commands: Record<string, () => Effect.Effect<void, unknown, never>> = {
     apply: () => applyCommand(ServiceLive),
-    status: () => statusCommand(sqlRunner, options.tableName),
+    status: () => statusCommand(ServiceLive),
     resolve: () => resolveCommand(ServiceLive, args)
   }
 
@@ -198,7 +218,20 @@ const main = async (): Promise<void> => {
 const isDirectExecution = process.argv[1]?.endsWith("db-evolutions.ts") || process.argv[1]?.endsWith("db-evolutions.js")
 if (isDirectExecution) {
   main().catch(err => {
-    console.error(err)
+    const causeSymbol = Object.getOwnPropertySymbols(err).find(s => s.toString().includes("FiberFailure/Cause"))
+    if (causeSymbol) {
+      const cause = err[causeSymbol]
+      const failure = Cause.failureOption(cause)
+      if (Option.isSome(failure)) {
+        console.error(`Error: ${extractErrorMessage(failure.value)}`)
+      } else {
+        console.error(Cause.pretty(cause))
+      }
+    } else if (err instanceof Error) {
+      console.error(`Error: ${err.message}`)
+    } else {
+      console.error("Error:", String(err))
+    }
     process.exit(1)
   })
 }

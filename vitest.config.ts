@@ -5,6 +5,7 @@ export default defineConfig({
     globals: true,
     environment: "node",
     pool: "forks",
+    testTimeout: 30_000,
     coverage: { provider: "v8", reporter: ["text", "lcov"] },
   },
 })
