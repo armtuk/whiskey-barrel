@@ -81,7 +81,7 @@ const createTestProject = (): TestProject => {
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
-describe("db-evolutions CLI (end-to-end)", { timeout: 30_000 }, () => {
+describe("db-evolutions CLI (end-to-end)", () => {
   let project: TestProject
 
   beforeEach(() => {
