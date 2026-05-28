@@ -63,10 +63,7 @@ describe("postgres-js driver", () => {
   })
 
   it("exec binds driver-style ? parameters", async () => {
-    await driver.exec(
-      `INSERT INTO ${TEST_TABLE} (id, name) VALUES (?, ?)`,
-      [99, "parameterized"]
-    )
+    await driver.exec(`INSERT INTO ${TEST_TABLE} (id, name) VALUES (?, ?)`, [99, "parameterized"])
 
     const rows = await sql`SELECT name FROM ${sql(TEST_TABLE)} WHERE id = 99`
     expect(rows).toHaveLength(1)

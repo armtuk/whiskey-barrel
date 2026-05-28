@@ -1,5 +1,5 @@
 import type { PlatformError } from "@effect/platform/Error"
-import { Context, Effect, Layer, Logger, LogLevel, Option, pipe, Stream } from "effect"
+import { Context, Effect, Layer, Logger, LogLevel, Option, pipe } from "effect"
 import type { UnknownException } from "effect/Cause"
 import type { ZodError } from "zod"
 import type { EvolutionParseError } from "./evolution.parser.ts"
@@ -15,12 +15,11 @@ import {
   type EvolutionRecord,
   evolutionRecordValidator,
   evolutionState,
-  InconsistentDatabaseError,
-  InitializationError,
+  extractErrorMessage,
+  MigrationExecError,
   type MigratorOptions,
   NotFoundError,
   type ResolveResult,
-  type RollbackResult,
   resolveResult,
   type StatusResult,
   type StatusStuckResult,
@@ -69,7 +68,7 @@ export class MigratorService extends Context.Tag("MigratorService")<
 
 // ── Service ────────────────────────────────────────────────────────────────────
 export const MigratorServiceLive = (options: MigratorOptions) => {
-  const logLevel = options.verbose ? LogLevel.Info : LogLevel.Warning
+  const logLevel = options.quiet ? LogLevel.Warning : LogLevel.Info
   return Layer.effect(
     MigratorService,
     Effect.gen(function* () {
@@ -93,7 +92,7 @@ export const MigratorServiceLive = (options: MigratorOptions) => {
             evolutionState.applyingDown
           ]),
           Effect.map(rows => {
-            if (rows.length == 0) {
+            if (rows.length === 0) {
               return { _tag: "success" } as StatusSuccessResult
             } else {
               return {
@@ -107,36 +106,75 @@ export const MigratorServiceLive = (options: MigratorOptions) => {
       }
 
       const fetchAllRecords = (): Effect.Effect<EvolutionRecord[], UnknownException | ZodError, never> =>
-        sqlRunner.query<unknown>(`SELECT * FROM ${options.tableName} ORDER BY id`).pipe(
-          Effect.flatMap(rows => Effect.forEach(rows, zodParseEffect(evolutionRecordValidator)))
+        sqlRunner
+          .query<unknown>(`SELECT * FROM ${options.tableName} ORDER BY id`)
+          .pipe(Effect.flatMap(rows => Effect.forEach(rows, zodParseEffect(evolutionRecordValidator))))
+
+      const applyOneUp = (x: Evolution) =>
+        pipe(
+          repo.startEvolution(x),
+          Effect.andThen(() =>
+            sqlRunner.exec(x.up).pipe(
+              Effect.catchAll(err => {
+                const msg = extractErrorMessage(err)
+                return pipe(
+                  repo.recordError(x.id, msg),
+                  Effect.catchAll(() => Effect.void),
+                  Effect.andThen(() => Effect.fail(new MigrationExecError({ evolutionId: x.id, direction: "up", detail: msg })))
+                )
+              })
+            )
+          ),
+          Effect.andThen(() => repo.setApplied(x))
+        )
+
+      const rollbackOneDown = (x: EvolutionRecord) =>
+        pipe(
+          repo.startDevolution(x),
+          Effect.andThen(() =>
+            sqlRunner.exec(x.revert_script).pipe(
+              Effect.catchAll(err => {
+                const msg = extractErrorMessage(err)
+                return pipe(
+                  repo.recordError(x.id, msg),
+                  Effect.catchAll(() => Effect.void),
+                  Effect.andThen(() => Effect.fail(new MigrationExecError({ evolutionId: x.id, direction: "down", detail: msg })))
+                )
+              })
+            )
+          ),
+          Effect.andThen(() => sqlRunner.exec(`delete from ${options.tableName} where id = ?`, [x.id]))
         )
 
       const applyDownToDiverged = (
         diverged: DivergedEvolution,
-        files: Evolution[],
+        _files: Evolution[],
         records: EvolutionRecord[]
       ): Effect.Effect<ApplyResult, UnknownException> => {
-        return Stream.fromIterable([...records.slice(records.findIndex(x => x.hash === diverged.record?.hash))].reverse()).pipe(
-          Stream.tap(x => Effect.logInfo(`Rolling back evolution ${x.id}`)),
-          Stream.tap(x => repo.startDevolution(x)),
-          Stream.tap(x => sqlRunner.exec(x.revert_script)),
-          Stream.tap(x => sqlRunner.exec(`delete from ${options.tableName} where id = ?`, [x.id])),
-          Stream.runDrain,
-          Effect.map(x => applyResult.success())
+        const toRollback = [...records.slice(records.findIndex(x => x.hash === diverged.record?.hash))].reverse()
+        return pipe(
+          Effect.forEach(toRollback, x =>
+            pipe(
+              Effect.logInfo(`Rolling back evolution ${x.id}`),
+              Effect.andThen(() => rollbackOneDown(x))
+            )
+          ),
+          Effect.map(() => applyResult.success() as ApplyResult),
+          Effect.catchTag("MigrationExecError", err => Effect.succeed(applyResult.failure(err.message) as ApplyResult))
         )
       }
 
-      const applyUpFromDiverged = (diverged: DivergedEvolution, files: Evolution[], records: EvolutionRecord[]) => {
-        return Stream.fromIterable(
-          // findIndex will give the first index where recores and file mismatch, which, should be the file file to apply
-          files.slice(files.findIndex(x => x.hash === diverged.file?.hash))
-        ).pipe(
-          Stream.tap(x => Effect.logInfo(`Applying evolution ${x.id}`)),
-          Stream.tap(x => repo.startEvolution(x)),
-          Stream.tap(x => sqlRunner.exec(x.up)),
-          Stream.tap(x => repo.setApplied(x)),
-          Stream.runDrain,
-          Effect.map(_ => applyResult.success())
+      const applyUpFromDiverged = (diverged: DivergedEvolution, files: Evolution[], _records: EvolutionRecord[]) => {
+        const toApply = files.slice(files.findIndex(x => x.hash === diverged.file?.hash))
+        return pipe(
+          Effect.forEach(toApply, x =>
+            pipe(
+              Effect.logInfo(`Applying evolution ${x.id}`),
+              Effect.andThen(() => applyOneUp(x))
+            )
+          ),
+          Effect.map(() => applyResult.success() as ApplyResult),
+          Effect.catchTag("MigrationExecError", err => Effect.succeed(applyResult.failure(err.message) as ApplyResult))
         )
       }
 
@@ -154,8 +192,13 @@ export const MigratorServiceLive = (options: MigratorOptions) => {
           }
           yield* Effect.logInfo("Database state is clean")
 
+          yield* Effect.logInfo(`Scanning ${options.evolutionsRoot}/${options.dbName} for evolution files`)
           const files = yield* fileService.fetchEvolutions()
-          yield* Effect.logInfo(`Found ${files.length} evolution file(s)`)
+          if (files.length === 0) {
+            yield* Effect.logWarning(`No evolution files found in ${options.evolutionsRoot}/${options.dbName} — nothing to apply`)
+            return applyResult.noop()
+          }
+          yield* Effect.logInfo(`Found ${files.length} evolution file(s): ${files.map(f => `${f.id}.sql`).join(", ")}`)
 
           const records = yield* fetchAllRecords()
           yield* Effect.logInfo(`${records.length} evolution(s) already applied`)
@@ -168,7 +211,9 @@ export const MigratorServiceLive = (options: MigratorOptions) => {
                 onDownUp: d =>
                   pipe(
                     applyDownToDiverged(d, files, records),
-                    Effect.flatMap(_ => applyUpFromDiverged(d, files, records))
+                    Effect.flatMap(result =>
+                      result._tag === "ApplyFailureResult" ? Effect.succeed(result) : applyUpFromDiverged(d, files, records)
+                    )
                   )
               }),
             onNone: () => Effect.logInfo("All evolutions up to date").pipe(Effect.map(() => applyResult.success()))
@@ -185,7 +230,7 @@ export const MigratorServiceLive = (options: MigratorOptions) => {
         return Option.fromNullable(unmatched)
       }
 
-      const rollback = () =>
+      const _rollback = () =>
         Effect.gen(function* () {
           yield* initialize()
 
@@ -234,5 +279,16 @@ export const MigratorServiceLive = (options: MigratorOptions) => {
 
       return { apply, resolve }
     })
-  ).pipe(Layer.provide(Logger.minimumLogLevel(logLevel)))
+  ).pipe(
+    Layer.provide(Logger.minimumLogLevel(logLevel)),
+    Layer.provide(
+      Logger.replace(
+        Logger.defaultLogger,
+        Logger.make(({ message }) => {
+          const text = Array.isArray(message) ? message.join(" ") : String(message)
+          process.stderr.write(`${text}\n`)
+        })
+      )
+    )
+  )
 }

@@ -25,6 +25,10 @@ export const resolveEvolutionFiles = (
       .filter(f => /^\d+\.sql$/i.test(f))
       .map(f => ({ id: parseInt(f, 10), filePath: join(dir, f) }))
       .sort((a, b) => a.id - b.id)
+  ).pipe(
+    Effect.tapError(err =>
+      Effect.logWarning(`Failed to read evolutions directory ${dir}: ${err instanceof Error ? err.message : String(err)}`)
+    )
   )
 }
 
