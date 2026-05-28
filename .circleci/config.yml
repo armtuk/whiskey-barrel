@@ -72,9 +72,6 @@ jobs:
           name: Install dependencies
           command: pnpm install --frozen-lockfile
       - run:
-          name: Authenticate to npm
-          command: echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" > ~/.npmrc
-      - run:
           name: Bump version and publish
           command: |
             npm version patch --no-git-tag-version
