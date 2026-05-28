@@ -49,14 +49,18 @@ const buildLayers = (config: EvolutionsConfig, sqlRunnerImpl: SqlRunner["Type"])
 }
 
 const main = async (): Promise<void> => {
-  const [, , command, ...args] = process.argv
+  const argv = process.argv.slice(2)
+  const verbose = argv.includes("--verbose") || argv.includes("-v")
+  const positional = argv.filter(a => a !== "--verbose" && a !== "-v")
+  const [command, ...args] = positional
 
   if (!command || command === "--help" || command === "-h") {
-    console.log("Usage: db-evolutions <apply | status | resolve <id>>")
+    console.log("Usage: db-evolutions [--verbose|-v] <apply | status | resolve <id>>")
     process.exit(command ? 0 : 1)
   }
 
   const config = await loadConfig()
+  config.options = { ...config.options, verbose }
 
   const sqlRunner = await createSqlRunnerFromConfig(config.connection)
 

@@ -1,5 +1,5 @@
 import type { PlatformError } from "@effect/platform/Error"
-import { Context, Effect, Layer, Option, pipe, Stream } from "effect"
+import { Context, Effect, Layer, Logger, LogLevel, Option, pipe, Stream } from "effect"
 import type { UnknownException } from "effect/Cause"
 import type { ZodError } from "zod"
 import type { EvolutionParseError } from "./evolution.parser.ts"
@@ -68,8 +68,9 @@ export class MigratorService extends Context.Tag("MigratorService")<
 >() {}
 
 // ── Service ────────────────────────────────────────────────────────────────────
-export const MigratorServiceLive = (options: MigratorOptions) =>
-  Layer.effect(
+export const MigratorServiceLive = (options: MigratorOptions) => {
+  const logLevel = options.verbose ? LogLevel.Info : LogLevel.Warning
+  return Layer.effect(
     MigratorService,
     Effect.gen(function* () {
       const fileService = yield* EvolutionFileService
@@ -116,6 +117,7 @@ export const MigratorServiceLive = (options: MigratorOptions) =>
         records: EvolutionRecord[]
       ): Effect.Effect<ApplyResult, UnknownException> => {
         return Stream.fromIterable([...records.slice(records.findIndex(x => x.hash === diverged.record?.hash))].reverse()).pipe(
+          Stream.tap(x => Effect.logInfo(`Rolling back evolution ${x.id}`)),
           Stream.tap(x => repo.startDevolution(x)),
           Stream.tap(x => sqlRunner.exec(x.revert_script)),
           Stream.tap(x => sqlRunner.exec(`delete from ${options.tableName} where id = ?`, [x.id])),
@@ -129,9 +131,10 @@ export const MigratorServiceLive = (options: MigratorOptions) =>
           // findIndex will give the first index where recores and file mismatch, which, should be the file file to apply
           files.slice(files.findIndex(x => x.hash === diverged.file?.hash))
         ).pipe(
+          Stream.tap(x => Effect.logInfo(`Applying evolution ${x.id}`)),
           Stream.tap(x => repo.startEvolution(x)),
           Stream.tap(x => sqlRunner.exec(x.up)),
-          Stream.tap(x => repo.setApplied(x)), // I'm imagining this will error here if there was a problem and stop
+          Stream.tap(x => repo.setApplied(x)),
           Stream.runDrain,
           Effect.map(_ => applyResult.success())
         )
@@ -140,8 +143,8 @@ export const MigratorServiceLive = (options: MigratorOptions) =>
       const apply = (): Effect.Effect<ApplyResult, UnknownException | ZodError | PlatformError | EvolutionParseError> =>
         Effect.gen(function* () {
           yield* initialize()
+          yield* Effect.logInfo(`Initialized table ${options.tableName}`)
 
-          // TODO see if we can decompose this
           const x = yield* status()
           if (x._tag === "stuck") {
             return applyResult.failure(x.message, x.evolutionRecord)
@@ -149,9 +152,13 @@ export const MigratorServiceLive = (options: MigratorOptions) =>
           if (x._tag === "failure") {
             return applyResult.failure(x.error || "Unknown error applying evolutions")
           }
+          yield* Effect.logInfo("Database state is clean")
 
           const files = yield* fileService.fetchEvolutions()
+          yield* Effect.logInfo(`Found ${files.length} evolution file(s)`)
+
           const records = yield* fetchAllRecords()
+          yield* Effect.logInfo(`${records.length} evolution(s) already applied`)
 
           return yield* Option.match(findFirstDivergence(files, records), {
             onSome: v =>
@@ -164,7 +171,7 @@ export const MigratorServiceLive = (options: MigratorOptions) =>
                     Effect.flatMap(_ => applyUpFromDiverged(d, files, records))
                   )
               }),
-            onNone: () => Effect.succeed(applyResult.success())
+            onNone: () => Effect.logInfo("All evolutions up to date").pipe(Effect.map(() => applyResult.success()))
           })
         })
 
@@ -189,6 +196,7 @@ export const MigratorServiceLive = (options: MigratorOptions) =>
                 ? Effect.fail(new NotFoundError({ content: "No evolutions to roll back" }))
                 : Effect.succeed(rows.slice(-1)[0])
             ),
+            Effect.tap(revert => Effect.logInfo(`Rolling back evolution ${revert.id}`)),
             Effect.tap(revert => sqlRunner.exec(`UPDATE ${options.tableName} SET state = 'applying_down' WHERE id = ?`, [revert.id])),
             Effect.tap(revert => sqlRunner.exec(revert.revert_script)),
             Effect.tap(revert => sqlRunner.query(`DELETE FROM ${options.tableName} WHERE id = ?`, [revert.id]))
@@ -211,9 +219,11 @@ export const MigratorServiceLive = (options: MigratorOptions) =>
                     evolutionState.applied,
                     value.id
                   ])
+                  yield* Effect.logInfo(`Resolved evolution ${id} (was applying_up → applied)`)
                   return resolveResult.success(id)
                 } else if (value.state === evolutionState.applyingDown) {
                   yield* sqlRunner.query(`delete from ${options.tableName} where id = ?`, [value.id])
+                  yield* Effect.logInfo(`Resolved evolution ${id} (was applying_down → removed)`)
                   return resolveResult.success(id)
                 } else {
                   return resolveResult.failure(`Evolution ${value.id} is not stuck (state: ${value.state})`)
@@ -224,4 +234,5 @@ export const MigratorServiceLive = (options: MigratorOptions) =>
 
       return { apply, resolve }
     })
-  )
+  ).pipe(Layer.provide(Logger.minimumLogLevel(logLevel)))
+}

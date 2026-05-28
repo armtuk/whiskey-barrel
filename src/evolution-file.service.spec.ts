@@ -42,7 +42,8 @@ describe("EvolutionFileService.fetchEvolutions()", () => {
     dbName: "testdb",
     dbType: "sqlite",
     evolutionsRoot,
-    tableName: "db_evolutions"
+    tableName: "db_evolutions",
+    verbose: false
   })
 
   it("returns evolutions sorted by id", async () => {

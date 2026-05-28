@@ -85,7 +85,8 @@ export const migratorOptionsValidator = z
     tableName: z
       .string()
       .regex(/^[a-zA-Z_][a-zA-Z0-9_]*$/, "tableName must be a valid SQL identifier")
-      .default("db_evolutions")
+      .default("db_evolutions"),
+    verbose: z.boolean().default(false)
   })
   .strict()
 
