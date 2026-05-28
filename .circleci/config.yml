@@ -1,0 +1,99 @@
+version: 2.1
+
+executors:
+  node:
+    docker:
+      - image: cimg/node:22.14
+      - image: cimg/postgres:16.6
+        environment:
+          POSTGRES_USER: test_user
+          POSTGRES_PASSWORD: test_password
+          POSTGRES_DB: test_db
+
+jobs:
+  build-and-test:
+    executor: node
+    steps:
+      - checkout
+      - run:
+          name: Install pnpm
+          command: corepack enable && corepack prepare pnpm@9 --activate
+      - restore_cache:
+          keys:
+            - pnpm-deps-{{ checksum "pnpm-lock.yaml" }}
+            - pnpm-deps-
+      - run:
+          name: Install dependencies
+          command: pnpm install --frozen-lockfile
+      - save_cache:
+          key: pnpm-deps-{{ checksum "pnpm-lock.yaml" }}
+          paths:
+            - node_modules
+      - run:
+          name: Typecheck
+          command: pnpm typecheck
+      - run:
+          name: Build
+          command: pnpm build
+      - run:
+          name: Wait for Postgres
+          command: |
+            for i in $(seq 1 30); do
+              pg_isready -h localhost -U test_user -d test_db && break
+              sleep 1
+            done
+      - run:
+          name: Test
+          command: pnpm test
+          environment:
+            DB_HOST: localhost
+            DB_PORT: "5432"
+            DB_NAME: test_db
+            DB_USERNAME: test_user
+            DB_PASSWORD: test_password
+      - persist_to_workspace:
+          root: .
+          paths:
+            - dist
+
+  publish:
+    executor: node
+    steps:
+      - checkout
+      - attach_workspace:
+          at: .
+      - run:
+          name: Install pnpm
+          command: corepack enable && corepack prepare pnpm@9 --activate
+      - restore_cache:
+          keys:
+            - pnpm-deps-{{ checksum "pnpm-lock.yaml" }}
+      - run:
+          name: Install dependencies
+          command: pnpm install --frozen-lockfile
+      - run:
+          name: Authenticate to npm
+          command: echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" > ~/.npmrc
+      - run:
+          name: Bump version and publish
+          command: |
+            npm version patch --no-git-tag-version
+            VERSION=$(node -p "require('./package.json').version")
+            git config user.name "circleci[bot]"
+            git config user.email "circleci[bot]@users.noreply.github.com"
+            git add package.json
+            git commit -m "chore: bump version to ${VERSION} [skip ci]"
+            git push origin main
+            pnpm publish --access public --no-git-checks
+
+workflows:
+  build-test-publish:
+    jobs:
+      - build-and-test
+      - publish:
+          requires:
+            - build-and-test
+          filters:
+            branches:
+              only: main
+          context: npm
