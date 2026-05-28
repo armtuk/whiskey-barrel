@@ -78,8 +78,34 @@ const main = async (): Promise<void> => {
       )
       console.log(JSON.stringify(result, null, 2))
     } else if (command === "status") {
-      console.log("Status command not yet implemented")
-      process.exit(1)
+      const options = migratorOptionsValidator.parse(config.options)
+      const rows = await Effect.runPromise(
+        sqlRunner.query<{ id: number; state: string; last_problem: string | null; applied_at: string }>(
+          `SELECT id, state, last_problem, applied_at FROM ${options.tableName} ORDER BY id`
+        )
+      )
+
+      if (rows.length === 0) {
+        console.log("No evolutions applied.")
+      } else {
+        console.log(`${rows.length} evolution(s) applied.`)
+        const last = rows[rows.length - 1]
+        if (last.state === "applied") {
+          console.log(`Last evolution: #${last.id} — applied successfully at ${last.applied_at}`)
+        } else {
+          console.log(`Last evolution: #${last.id} — state: ${last.state}`)
+          if (last.last_problem) {
+            console.log(`Error: ${last.last_problem}`)
+          }
+        }
+        const stuck = rows.filter(r => r.state !== "applied")
+        if (stuck.length > 0) {
+          console.log(`\n${stuck.length} stuck evolution(s):`)
+          stuck.forEach(r => {
+            console.log(`  #${r.id} — ${r.state}${r.last_problem ? `: ${r.last_problem}` : ""}`)
+          })
+        }
+      }
     } else if (command === "resolve") {
       const id = parseInt(args[0] ?? "", 10)
       if (Number.isNaN(id)) {
