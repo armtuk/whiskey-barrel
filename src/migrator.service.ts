@@ -239,5 +239,11 @@ export const MigratorServiceLive = (options: MigratorOptions) => {
 
       return { apply, resolve }
     })
-  ).pipe(Layer.provide(Logger.minimumLogLevel(logLevel)))
+  ).pipe(
+    Layer.provide(Logger.minimumLogLevel(logLevel)),
+    Layer.provide(Logger.replace(Logger.defaultLogger, Logger.make(({ message }) => {
+      const text = Array.isArray(message) ? message.join(" ") : String(message)
+      process.stderr.write(`${text}\n`)
+    })))
+  )
 }

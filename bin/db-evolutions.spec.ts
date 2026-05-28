@@ -1,330 +1,346 @@
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs"
+import { execFileSync } from "node:child_process"
+import { mkdirSync, readFileSync, writeFileSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import Database from "better-sqlite3"
-import { Effect, Layer } from "effect"
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
-import { fromBetterSqlite3 } from "../src/drivers/better-sqlite3.driver.ts"
-import { EvolutionFileParserLive } from "../src/evolution.parser.ts"
-import { EvolutionRepositoryLive } from "../src/evolution.repository.ts"
-import { EvolutionFileServiceLive, FileLineReader } from "../src/evolution-file.service.ts"
-import { MigratorService, MigratorServiceLive } from "../src/migrator.service.ts"
-import type { MigratorOptions } from "../src/types.ts"
-import { fromMigrationDriver, SqlRunner } from "../src/util/sql-runner.ts"
-import {
-  applyCommand,
-  buildStatusReport,
-  parseArgs,
-  resolveCommand,
-  statusCommand,
-  type StatusReport
-} from "./db-evolutions.ts"
+import { afterEach, beforeEach, describe, expect, it } from "vitest"
 
+const CLI_PATH = join(__dirname, "db-evolutions.ts")
 const SQL_1 = "-- #### !Ups\nCREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT);\n-- #### !Downs\nDROP TABLE users;"
 const SQL_2 = "-- #### !Ups\nCREATE TABLE posts (id INTEGER PRIMARY KEY, title TEXT);\n-- #### !Downs\nDROP TABLE posts;"
 
-// ── buildStatusReport (pure function) ─────────────────────────────────────────
+// ── Test Harness ──────────────────────────────────────────────────────────────
 
-describe("buildStatusReport", () => {
-  it("returns zero count and no lastEvolution for empty rows", () => {
-    const report = buildStatusReport([])
-    expect(report.appliedCount).toBe(0)
-    expect(report.lastEvolution).toBeUndefined()
-    expect(report.stuckEvolutions).toEqual([])
-  })
+interface CliResult {
+  stdout: string
+  stderr: string
+  exitCode: number
+}
 
-  it("counts only actually-applied rows, not stuck ones", () => {
-    const report = buildStatusReport([
-      { id: 1, state: "applied", last_problem: null, applied_at: "2026-01-01T00:00:00Z" },
-      { id: 2, state: "applying_up", last_problem: "syntax error", applied_at: "2026-01-02T00:00:00Z" }
-    ])
-    expect(report.appliedCount).toBe(1)
-    expect(report.stuckEvolutions).toHaveLength(1)
-  })
+const runCli = (args: string[], cwd: string, env: Record<string, string> = {}): CliResult => {
+  const stderrFile = join(tmpdir(), `wb-stderr-${Date.now()}-${Math.random().toString(36).slice(2)}.txt`)
+  const shellCmd = `npx tsx ${CLI_PATH} ${args.map(a => `'${a}'`).join(" ")} 2>${stderrFile}`
+  try {
+    const stdout = execFileSync("sh", ["-c", shellCmd], {
+      cwd,
+      env: { ...process.env, ...env },
+      encoding: "utf-8",
+      timeout: 15000
+    })
+    const stderr = readFileSync(stderrFile, "utf-8")
+    rmSync(stderrFile, { force: true })
+    return { stdout, stderr, exitCode: 0 }
+  } catch (err: unknown) {
+    const e = err as { stdout?: string; status?: number }
+    let stderr = ""
+    try { stderr = readFileSync(stderrFile, "utf-8") } catch {}
+    rmSync(stderrFile, { force: true })
+    return {
+      stdout: e.stdout ?? "",
+      stderr,
+      exitCode: e.status ?? 1
+    }
+  }
+}
 
-  it("reports all applied when every row has state=applied", () => {
-    const report = buildStatusReport([
-      { id: 1, state: "applied", last_problem: null, applied_at: "2026-01-01T00:00:00Z" },
-      { id: 2, state: "applied", last_problem: null, applied_at: "2026-01-02T00:00:00Z" }
-    ])
-    expect(report.appliedCount).toBe(2)
-    expect(report.lastEvolution?.id).toBe(2)
-    expect(report.lastEvolution?.state).toBe("applied")
-    expect(report.stuckEvolutions).toEqual([])
-  })
+// ── Fixture helpers ───────────────────────────────────────────────────────────
 
-  it("lastEvolution reflects the highest-id row regardless of state", () => {
-    const report = buildStatusReport([
-      { id: 1, state: "applied", last_problem: null, applied_at: "2026-01-01T00:00:00Z" },
-      { id: 2, state: "applying_up", last_problem: "col missing", applied_at: "2026-01-02T00:00:00Z" }
-    ])
-    expect(report.lastEvolution?.id).toBe(2)
-    expect(report.lastEvolution?.state).toBe("applying_up")
-    expect(report.lastEvolution?.lastProblem).toBe("col missing")
-  })
+interface TestProject {
+  dir: string
+  dbPath: string
+  writeEvolution: (id: number, sql: string) => void
+  writeConfig: (config: string) => void
+  run: (args: string[], env?: Record<string, string>) => CliResult
+}
 
-  it("reports applying_down as stuck", () => {
-    const report = buildStatusReport([
-      { id: 1, state: "applying_down", last_problem: "timeout", applied_at: "2026-01-01T00:00:00Z" }
-    ])
-    expect(report.appliedCount).toBe(0)
-    expect(report.stuckEvolutions).toHaveLength(1)
-    expect(report.stuckEvolutions[0]).toEqual({ id: 1, state: "applying_down", lastProblem: "timeout" })
-  })
+const createTestProject = (): TestProject => {
+  const dir = join(tmpdir(), `wb-cli-test-${Date.now()}-${Math.random().toString(36).slice(2)}`)
+  const dbPath = join(dir, "test.db")
+  const evolutionsDir = join(dir, "evolutions", "default")
+  mkdirSync(evolutionsDir, { recursive: true })
 
-  it("handles multiple stuck evolutions among applied ones", () => {
-    const report = buildStatusReport([
-      { id: 1, state: "applied", last_problem: null, applied_at: "2026-01-01T00:00:00Z" },
-      { id: 2, state: "applying_up", last_problem: "err1", applied_at: "2026-01-02T00:00:00Z" },
-      { id: 3, state: "applying_down", last_problem: "err2", applied_at: "2026-01-03T00:00:00Z" }
-    ])
-    expect(report.appliedCount).toBe(1)
-    expect(report.stuckEvolutions).toHaveLength(2)
-    expect(report.stuckEvolutions.map(s => s.id)).toEqual([2, 3])
-  })
+  const writeEvolution = (id: number, sql: string) => {
+    writeFileSync(join(evolutionsDir, `${id}.sql`), sql)
+  }
 
-  it("preserves null last_problem for stuck evolutions", () => {
-    const report = buildStatusReport([
-      { id: 1, state: "applying_up", last_problem: null, applied_at: "2026-01-01T00:00:00Z" }
-    ])
-    expect(report.stuckEvolutions[0].lastProblem).toBeNull()
-  })
-})
+  const writeConfig = (config: string) => {
+    writeFileSync(join(dir, "evolutions.config.ts"), config)
+  }
 
-// ── parseArgs ─────────────────────────────────────────────────────────────────
+  writeConfig(`
+    export default {
+      connection: { type: "sqlite" as const, path: "${dbPath.replace(/\\/g, "\\\\")}" },
+      options: { dbName: "default", dbType: "sqlite" as const, evolutionsRoot: "${join(dir, "evolutions").replace(/\\/g, "\\\\")}" }
+    }
+  `)
 
-describe("parseArgs", () => {
-  const originalArgv = process.argv
+  const run = (args: string[], env: Record<string, string> = {}) => runCli(args, dir, env)
 
-  afterEach(() => {
-    process.argv = originalArgv
-  })
+  return { dir, dbPath, writeEvolution, writeConfig, run }
+}
 
-  it("parses a simple command", () => {
-    process.argv = ["node", "db-evolutions.ts", "apply"]
-    const result = parseArgs()
-    expect(result).toEqual({ command: "apply", args: [], quiet: false })
-  })
+// ── Tests ─────────────────────────────────────────────────────────────────────
 
-  it("parses command with arguments", () => {
-    process.argv = ["node", "db-evolutions.ts", "resolve", "42"]
-    const result = parseArgs()
-    expect(result).toEqual({ command: "resolve", args: ["42"], quiet: false })
-  })
-
-  it("extracts --quiet flag to suppress output", () => {
-    process.argv = ["node", "db-evolutions.ts", "--quiet", "apply"]
-    const result = parseArgs()
-    expect(result).toEqual({ command: "apply", args: [], quiet: true })
-  })
-
-  it("extracts -v flag", () => {
-    process.argv = ["node", "db-evolutions.ts", "-q", "status"]
-    const result = parseArgs()
-    expect(result).toEqual({ command: "status", args: [], quiet: true })
-  })
-
-  it("quiet flag works after command", () => {
-    process.argv = ["node", "db-evolutions.ts", "apply", "--quiet"]
-    const result = parseArgs()
-    expect(result).toEqual({ command: "apply", args: [], quiet: true })
-  })
-
-  it("calls process.exit for --help", () => {
-    process.argv = ["node", "db-evolutions.ts", "--help"]
-    const exitSpy = vi.spyOn(process, "exit").mockImplementation(() => { throw new Error("exit") })
-    expect(() => parseArgs()).toThrow("exit")
-    expect(exitSpy).toHaveBeenCalledWith(0)
-    exitSpy.mockRestore()
-  })
-
-  it("calls process.exit with 1 when no command given", () => {
-    process.argv = ["node", "db-evolutions.ts"]
-    const exitSpy = vi.spyOn(process, "exit").mockImplementation(() => { throw new Error("exit") })
-    expect(() => parseArgs()).toThrow("exit")
-    expect(exitSpy).toHaveBeenCalledWith(1)
-    exitSpy.mockRestore()
-  })
-})
-
-// ── Command integration tests ─────────────────────────────────────────────────
-
-describe("command integration", () => {
-  let db: Database.Database
-  let sqlRunner: SqlRunner["Type"]
-  let options: MigratorOptions
-  let evolutionsRoot: string
-  // biome-ignore lint/suspicious/noExplicitAny: test helper — layer type varies between buildLayers (NodeFileSystem) and test construction
-  let ServiceLive: any
+describe("db-evolutions CLI (end-to-end)", () => {
+  let project: TestProject
 
   beforeEach(() => {
-    evolutionsRoot = join(tmpdir(), `ev-cli-test-${Date.now()}-${Math.random().toString(36).slice(2)}`)
-    mkdirSync(join(evolutionsRoot, "testdb"), { recursive: true })
-
-    db = new Database(":memory:")
-    const driver = fromBetterSqlite3(db)
-    sqlRunner = fromMigrationDriver(driver)
-
-    options = {
-      dbName: "testdb",
-      dbType: "sqlite",
-      evolutionsRoot,
-      tableName: "db_evolutions",
-      quiet: false
-    }
-
-    const SqlRunnerLive = Layer.succeed(SqlRunner, sqlRunner)
-    const FileLineReaderLive = Layer.succeed(FileLineReader, {
-      linesFromFile: (path: string) => Effect.sync(() => readFileSync(path, "utf-8").split("\n"))
-    })
-    const RepoLive = EvolutionRepositoryLive(options.tableName).pipe(Layer.provide(SqlRunnerLive))
-    const FileServiceLive = EvolutionFileServiceLive(options).pipe(
-      Layer.provide(EvolutionFileParserLive()),
-      Layer.provide(FileLineReaderLive)
-    )
-    const DepsLive = Layer.mergeAll(SqlRunnerLive, RepoLive, FileServiceLive)
-    ServiceLive = MigratorServiceLive(options).pipe(Layer.provide(DepsLive))
+    project = createTestProject()
   })
 
   afterEach(() => {
-    db.close()
+    rmSync(project.dir, { recursive: true, force: true })
   })
 
-  // ── applyCommand ──────────────────────────────────────────────────────────
+  // ── Help & arg parsing ──────────────────────────────────────────────────
 
-  describe("applyCommand", () => {
-    it("applies migrations and returns success", async () => {
-      writeFileSync(join(evolutionsRoot, "testdb", "1.sql"), SQL_1)
-
-      await Effect.runPromise(applyCommand(ServiceLive))
-
-      const rows = db.prepare("SELECT * FROM db_evolutions").all() as { id: number; state: string }[]
-      expect(rows).toHaveLength(1)
-      expect(rows[0].state).toBe("applied")
+  describe("help and argument parsing", () => {
+    it("prints usage and exits 0 for --help", () => {
+      const result = project.run(["--help"])
+      expect(result.stdout).toContain("Usage:")
+      expect(result.exitCode).toBe(0)
     })
 
-    it("succeeds as no-op when no evolution files exist", async () => {
-      await Effect.runPromise(applyCommand(ServiceLive))
-
-      const rows = db.prepare("SELECT * FROM db_evolutions").all()
-      expect(rows).toHaveLength(0)
+    it("prints usage and exits 1 when no command given", () => {
+      const result = project.run([])
+      expect(result.exitCode).toBe(1)
     })
 
-    it("can be constructed without affecting other commands", () => {
-      const effect = applyCommand(ServiceLive)
-      expect(effect).toBeDefined()
+    it("exits 1 for unknown command", () => {
+      const result = project.run(["bogus"])
+      expect(result.stderr).toContain("Unknown command: bogus")
+      expect(result.exitCode).toBe(1)
     })
   })
 
-  // ── statusCommand ─────────────────────────────────────────────────────────
+  // ── apply command ─────────────────────────────────────────────────────────
 
-  describe("statusCommand", () => {
-    it("runs successfully on a fresh database after apply initializes the table", async () => {
-      await Effect.runPromise(applyCommand(ServiceLive))
-      await Effect.runPromise(statusCommand(sqlRunner, options.tableName))
+  describe("apply", () => {
+    it("applies evolution files and reports success", () => {
+      project.writeEvolution(1, SQL_1)
+      project.writeEvolution(2, SQL_2)
+
+      const result = project.run(["apply"])
+
+      expect(result.exitCode).toBe(0)
+      expect(result.stdout).toContain("ApplySuccessResult")
+      expect(result.stderr).toContain("Applying evolution 1")
+      expect(result.stderr).toContain("Applying evolution 2")
+
+      const db = new Database(project.dbPath)
+      const rows = db.prepare("SELECT * FROM db_evolutions ORDER BY id").all() as { id: number; state: string }[]
+      expect(rows).toHaveLength(2)
+      expect(rows.every(r => r.state === "applied")).toBe(true)
+
+      const tables = db.prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name").all() as { name: string }[]
+      expect(tables.map(t => t.name)).toContain("users")
+      expect(tables.map(t => t.name)).toContain("posts")
+      db.close()
     })
 
-    it("reports applied evolutions after successful apply", async () => {
-      writeFileSync(join(evolutionsRoot, "testdb", "1.sql"), SQL_1)
-      writeFileSync(join(evolutionsRoot, "testdb", "2.sql"), SQL_2)
-      await Effect.runPromise(applyCommand(ServiceLive))
+    it("warns clearly when no evolution files exist", () => {
+      const result = project.run(["apply"])
 
-      const rows = await Effect.runPromise(
-        sqlRunner.query<{ id: number; state: string; last_problem: string | null; applied_at: string }>(
-          `SELECT id, state, last_problem, applied_at FROM ${options.tableName} ORDER BY id`
-        )
-      )
-      const report = buildStatusReport(rows)
-
-      expect(report.appliedCount).toBe(2)
-      expect(report.lastEvolution?.state).toBe("applied")
-      expect(report.stuckEvolutions).toEqual([])
+      expect(result.exitCode).toBe(0)
+      expect(result.stderr).toContain("No evolution files found")
+      expect(result.stdout).toContain("ApplyNoopResult")
     })
 
-    it("correctly distinguishes applied from stuck in the count", async () => {
-      writeFileSync(join(evolutionsRoot, "testdb", "1.sql"), SQL_1)
-      writeFileSync(join(evolutionsRoot, "testdb", "2.sql"), SQL_2)
-      await Effect.runPromise(applyCommand(ServiceLive))
+    it("verbose logging shows file list and scan path", () => {
+      project.writeEvolution(1, SQL_1)
 
-      db.prepare("UPDATE db_evolutions SET state = 'applying_up', last_problem = 'failed' WHERE id = 2").run()
+      const result = project.run(["apply"])
 
-      const rows = await Effect.runPromise(
-        sqlRunner.query<{ id: number; state: string; last_problem: string | null; applied_at: string }>(
-          `SELECT id, state, last_problem, applied_at FROM ${options.tableName} ORDER BY id`
-        )
-      )
-      const report = buildStatusReport(rows)
-
-      expect(report.appliedCount).toBe(1)
-      expect(report.stuckEvolutions).toHaveLength(1)
-      expect(report.stuckEvolutions[0].id).toBe(2)
+      expect(result.stderr).toContain("Scanning")
+      expect(result.stderr).toContain("Found 1 evolution file(s): 1.sql")
     })
 
-    it("can be constructed independently without triggering other command side effects", () => {
-      const effect = statusCommand(sqlRunner, options.tableName)
-      expect(effect).toBeDefined()
+    it("quiet mode suppresses info logging", () => {
+      project.writeEvolution(1, SQL_1)
+
+      const result = project.run(["--quiet", "apply"])
+
+      expect(result.stderr).not.toContain("Applying evolution")
+      expect(result.stdout).toContain("ApplySuccessResult")
+    })
+
+    it("is idempotent — second apply with no changes reports success", () => {
+      project.writeEvolution(1, SQL_1)
+      project.run(["apply"])
+
+      const result = project.run(["apply"])
+
+      expect(result.exitCode).toBe(0)
+      expect(result.stderr).toContain("All evolutions up to date")
     })
   })
 
-  // ── resolveCommand ────────────────────────────────────────────────────────
+  // ── status command ────────────────────────────────────────────────────────
 
-  describe("resolveCommand", () => {
-    it("resolves a stuck evolution", async () => {
-      writeFileSync(join(evolutionsRoot, "testdb", "1.sql"), SQL_1)
-      await Effect.runPromise(applyCommand(ServiceLive))
+  describe("status", () => {
+    it("reports no evolutions on a fresh database", () => {
+      project.run(["apply"])
+
+      const result = project.run(["status"])
+
+      expect(result.exitCode).toBe(0)
+      expect(result.stdout).toContain("No evolutions applied")
+    })
+
+    it("reports applied count and last evolution after apply", () => {
+      project.writeEvolution(1, SQL_1)
+      project.writeEvolution(2, SQL_2)
+      project.run(["apply"])
+
+      const result = project.run(["status"])
+
+      expect(result.exitCode).toBe(0)
+      expect(result.stdout).toContain("2 evolution(s) applied")
+      expect(result.stdout).toContain("Last evolution: #2")
+      expect(result.stdout).toContain("applied successfully")
+    })
+
+    it("reports stuck evolutions with error messages", () => {
+      project.writeEvolution(1, SQL_1)
+      project.run(["apply"])
+
+      const db = new Database(project.dbPath)
+      db.prepare("UPDATE db_evolutions SET state = 'applying_up', last_problem = 'column already exists' WHERE id = 1").run()
+      db.close()
+
+      const result = project.run(["status"])
+
+      expect(result.exitCode).toBe(0)
+      expect(result.stdout).toContain("0 evolution(s) applied")
+      expect(result.stdout).toContain("stuck")
+      expect(result.stdout).toContain("column already exists")
+    })
+  })
+
+  // ── resolve command ───────────────────────────────────────────────────────
+
+  describe("resolve", () => {
+    it("resolves a stuck applying_up evolution", () => {
+      project.writeEvolution(1, SQL_1)
+      project.run(["apply"])
+
+      const db = new Database(project.dbPath)
       db.prepare("UPDATE db_evolutions SET state = 'applying_up' WHERE id = 1").run()
+      db.close()
 
-      await Effect.runPromise(resolveCommand(ServiceLive, ["1"]))
+      const result = project.run(["resolve", "1"])
 
-      const row = db.prepare("SELECT state FROM db_evolutions WHERE id = 1").get() as { state: string }
+      expect(result.exitCode).toBe(0)
+      expect(result.stdout).toContain("ResolveSuccessResult")
+
+      const db2 = new Database(project.dbPath)
+      const row = db2.prepare("SELECT state FROM db_evolutions WHERE id = 1").get() as { state: string }
       expect(row.state).toBe("applied")
+      db2.close()
     })
 
-    it("can be constructed with valid args without side effects on other commands", () => {
-      const effect = resolveCommand(ServiceLive, ["1"])
-      expect(effect).toBeDefined()
+    it("exits 1 when no id argument given", () => {
+      const result = project.run(["resolve"])
+      expect(result.exitCode).toBe(1)
     })
 
-    it("calls process.exit(1) when given no id argument", () => {
-      const exitSpy = vi.spyOn(process, "exit").mockImplementation(() => { throw new Error("exit") })
-      expect(() => resolveCommand(ServiceLive, [])).toThrow("exit")
-      expect(exitSpy).toHaveBeenCalledWith(1)
-      exitSpy.mockRestore()
-    })
-
-    it("calls process.exit(1) when given a non-numeric id", () => {
-      const exitSpy = vi.spyOn(process, "exit").mockImplementation(() => { throw new Error("exit") })
-      expect(() => resolveCommand(ServiceLive, ["abc"])).toThrow("exit")
-      expect(exitSpy).toHaveBeenCalledWith(1)
-      exitSpy.mockRestore()
+    it("exits 1 when id is not numeric", () => {
+      const result = project.run(["resolve", "abc"])
+      expect(result.exitCode).toBe(1)
     })
   })
 
-  // ── Command dispatch (lazy evaluation) ────────────────────────────────────
+  // ── Config and connection errors ────────────────────────────────────────
 
-  describe("command dispatch (lazy evaluation)", () => {
-    it("constructing the command map with empty resolve args does NOT trigger process.exit", () => {
-      const commands: Record<string, () => Effect.Effect<void, unknown, never>> = {
-        apply: () => applyCommand(ServiceLive),
-        status: () => statusCommand(sqlRunner, options.tableName),
-        resolve: () => resolveCommand(ServiceLive, [])
-      }
-      expect(commands.apply).toBeDefined()
-      expect(commands.status).toBeDefined()
-      expect(commands.resolve).toBeDefined()
+  describe("config and connection errors", () => {
+    it("fails clearly when no config file exists", () => {
+      const emptyDir = join(tmpdir(), `wb-no-config-${Date.now()}`)
+      mkdirSync(emptyDir, { recursive: true })
+
+      const result = runCli(["apply"], emptyDir)
+
+      expect(result.exitCode).toBe(1)
+      expect(result.stderr).toContain("No evolutions.config.ts found")
+      rmSync(emptyDir, { recursive: true, force: true })
     })
 
-    it("only the invoked command's factory runs — others are not evaluated", () => {
-      const exitSpy = vi.spyOn(process, "exit").mockImplementation(() => { throw new Error("exit") })
-      const commands: Record<string, () => Effect.Effect<void, unknown, never>> = {
-        apply: () => applyCommand(ServiceLive),
-        status: () => statusCommand(sqlRunner, options.tableName),
-        resolve: () => resolveCommand(ServiceLive, [])
-      }
-      expect(() => commands.apply()).not.toThrow()
-      expect(() => commands.status()).not.toThrow()
-      expect(() => commands.resolve()).toThrow("exit")
-      exitSpy.mockRestore()
+    it("fails clearly when config has a syntax error", () => {
+      writeFileSync(join(project.dir, "evolutions.config.ts"), "export default {{{{ broken")
+
+      const result = project.run(["apply"])
+
+      expect(result.exitCode).toBe(1)
+      expect(result.stderr.length).toBeGreaterThan(0)
+    })
+
+    it("fails clearly when connection config is missing required fields", () => {
+      project.writeConfig(`
+        export default {
+          connection: { type: "postgresql" },
+          options: { dbName: "default", dbType: "sqlite", evolutionsRoot: "./evolutions" }
+        }
+      `)
+
+      const result = project.run(["apply"])
+
+      expect(result.exitCode).toBe(1)
+      expect(result.stderr).toContain("Invalid connection config")
+    })
+
+    it("shows connection URL in stderr on startup", () => {
+      project.writeEvolution(1, SQL_1)
+
+      const result = project.run(["apply"])
+
+      expect(result.stderr).toContain("Connecting to sqlite://")
+    })
+
+    it("loads .env file and makes variables available to config", () => {
+      writeFileSync(join(project.dir, ".env"), `TEST_DB_PATH=${project.dbPath}`)
+      project.writeConfig(`
+        export default {
+          connection: { type: "sqlite" as const, path: process.env.TEST_DB_PATH! },
+          options: { dbName: "default", dbType: "sqlite" as const, evolutionsRoot: "${join(project.dir, "evolutions").replace(/\\/g, "\\\\")}" }
+        }
+      `)
+      project.writeEvolution(1, SQL_1)
+
+      const result = project.run(["apply"])
+
+      expect(result.exitCode).toBe(0)
+      expect(result.stdout).toContain("ApplySuccessResult")
+    })
+
+    it("loads .env.local and overrides .env", () => {
+      const altDbPath = join(project.dir, "alt.db")
+      writeFileSync(join(project.dir, ".env"), `TEST_DB_PATH=/nonexistent/path.db`)
+      writeFileSync(join(project.dir, ".env.local"), `TEST_DB_PATH=${altDbPath}`)
+      project.writeConfig(`
+        export default {
+          connection: { type: "sqlite" as const, path: process.env.TEST_DB_PATH! },
+          options: { dbName: "default", dbType: "sqlite" as const, evolutionsRoot: "${join(project.dir, "evolutions").replace(/\\/g, "\\\\")}" }
+        }
+      `)
+      project.writeEvolution(1, SQL_1)
+
+      const result = project.run(["apply"])
+
+      expect(result.exitCode).toBe(0)
+      expect(result.stderr).toContain(`Connecting to sqlite://${altDbPath}`)
+    })
+
+    it("config with connectionString shows masked URL, not undefined fields", () => {
+      project.writeConfig(`
+        export default {
+          connection: { type: "postgresql" as const, host: "localhost", port: 5432, database: "testdb", connectionString: "postgresql://myuser:secret@localhost:5432/testdb" },
+          options: { dbName: "default", dbType: "postgresql" as const, evolutionsRoot: "${join(project.dir, "evolutions").replace(/\\/g, "\\\\")}" }
+        }
+      `)
+
+      const result = project.run(["apply"])
+
+      expect(result.stderr).toContain("Connecting to postgresql://***@localhost:5432/testdb")
+      expect(result.stderr).not.toContain("secret")
     })
   })
 })

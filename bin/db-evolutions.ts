@@ -6,7 +6,7 @@ import { config as loadEnv } from "dotenv"
 import { NodeFileSystem } from "@effect/platform-node"
 import { Effect, Layer, pipe } from "effect"
 import { createJiti } from "jiti"
-import type { ConnectionConfig, MigratorOptionsInput } from "../src/index.ts"
+import type { MigratorOptionsInput } from "../src/index.ts"
 import {
   createDriverFromConfig,
   EvolutionFileParserLive,
@@ -19,13 +19,19 @@ import {
   MigratorServiceLive,
   SqlRunner
 } from "../src/index.ts"
-import { migratorOptionsValidator } from "../src/types.ts"
+import { connectionConfigValidator, type ConnectionConfig, migratorOptionsValidator } from "../src/types.ts"
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 interface EvolutionsConfig {
   connection: ConnectionConfig
   options: MigratorOptionsInput
+}
+
+const describeConnection = (conn: ConnectionConfig): string => {
+  if (conn.type === "sqlite") return `sqlite://${conn.path}`
+  if (conn.connectionString) return conn.connectionString.replace(/:\/\/[^@]*@/, "://***@")
+  return `postgresql://${conn.user ?? ""}@${conn.host}:${conn.port}/${conn.database}`
 }
 
 export interface CommandLineArguments {
@@ -59,7 +65,7 @@ const CONFIG_FILENAMES = ["evolutions.config.ts", "evolutions.config.js", "evolu
 const tryLoadConfig = (name: string): Effect.Effect<EvolutionsConfig, Error> =>
   Effect.tryPromise({
     try: () => jiti.import(`${process.cwd()}/${name}`, { default: true }) as Promise<EvolutionsConfig>,
-    catch: () => new Error(`Could not load ${name}`)
+    catch: (err) => new Error(`Failed to load ${name}: ${err instanceof Error ? err.message : String(err)}`)
   })
 
 const loadConfig = (): Effect.Effect<EvolutionsConfig, Error> =>
@@ -175,13 +181,29 @@ const main = async (): Promise<void> => {
   const config = await Effect.runPromise(loadConfig())
   config.options = { ...config.options, quiet }
 
-  const connectionDescription = config.connection.type === "postgresql"
-    ? `postgresql://${config.connection.user ?? ""}@${config.connection.host}:${config.connection.port}/${config.connection.database}`
-    : `sqlite://${config.connection.path}`
-  console.error(`Connecting to ${connectionDescription}`)
+  let connection: ConnectionConfig
+  try {
+    connection = connectionConfigValidator.parse(config.connection)
+  } catch (err) {
+    console.error("Invalid connection config in evolutions.config:")
+    console.error(err instanceof Error ? err.message : String(err))
+    process.exit(1)
+  }
 
-  const driver = await createDriverFromConfig(config.connection)
+  console.error(`Connecting to ${describeConnection(connection)}`)
+
+  const driver = await createDriverFromConfig(connection)
   const sqlRunner = fromMigrationDriver(driver)
+
+  try {
+    await Effect.runPromise(sqlRunner.query("SELECT 1"))
+  } catch (err) {
+    console.error(`Failed to connect to ${describeConnection(connection)}`)
+    console.error(err instanceof Error ? err.message : String(err))
+    await driver.close()
+    process.exit(1)
+  }
+
   const options = migratorOptionsValidator.parse(config.options)
   const ServiceLive = buildLayers(config, sqlRunner)
 
@@ -207,7 +229,13 @@ const main = async (): Promise<void> => {
 const isDirectExecution = process.argv[1]?.endsWith("db-evolutions.ts") || process.argv[1]?.endsWith("db-evolutions.js")
 if (isDirectExecution) {
   main().catch(err => {
-    console.error(err)
+    if (err instanceof Error) {
+      console.error(`Error: ${err.message}`)
+    } else if (typeof err === "object" && err !== null && "_tag" in err) {
+      console.error(`Error [${err._tag}]: ${JSON.stringify(err, null, 2)}`)
+    } else {
+      console.error("Error:", err)
+    }
     process.exit(1)
   })
 }
