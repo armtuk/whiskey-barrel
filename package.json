@@ -6,6 +6,7 @@
     "type": "git",
     "url": "https://github.com/fifth-dimension-engineering/whiskey-barrel.git"
   },
+  "packageManager": "pnpm@10.17.0",
   "type": "module",
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",
