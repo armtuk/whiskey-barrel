@@ -1,6 +1,6 @@
 {
   "name": "@alexrmturner/whiskey-barrel",
-  "version": "0.1.8",
+  "version": "0.1.10",
   "description": "Play Framework-style database evolutions for Node.js",
   "repository": {
     "type": "git",

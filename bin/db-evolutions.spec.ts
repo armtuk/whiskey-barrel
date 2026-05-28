@@ -69,7 +69,7 @@ const createTestProject = (): TestProject => {
 
   writeConfig(`
     export default {
-      connection: { type: "sqlite" as const, path: "${dbPath.replace(/\\/g, "\\\\")}" },
+      connection: "sqlite://${dbPath.replace(/\\/g, "\\\\")}",
       options: { dbName: "default", dbType: "sqlite" as const, evolutionsRoot: "${join(dir, "evolutions").replace(/\\/g, "\\\\")}" }
     }
   `)
@@ -277,7 +277,7 @@ describe("db-evolutions CLI (end-to-end)", () => {
     it("fails clearly when connection config is missing required fields", () => {
       project.writeConfig(`
         export default {
-          connection: { type: "postgresql" },
+          connection: "not-a-valid-url",
           options: { dbName: "default", dbType: "sqlite", evolutionsRoot: "./evolutions" }
         }
       `)
@@ -285,9 +285,9 @@ describe("db-evolutions CLI (end-to-end)", () => {
       const result = project.run(["apply"])
 
       expect(result.exitCode).toBe(1)
-      expect(result.stderr).toContain("Invalid connection config")
+      expect(result.stderr).toContain("Invalid connection URL")
       expect(result.stderr).toContain("Received:")
-      expect(result.stderr).toContain('"type": "postgresql"')
+      expect(result.stderr).toContain("not-a-valid-url")
     })
 
     it("shows connection URL in stderr on startup", () => {
@@ -302,7 +302,7 @@ describe("db-evolutions CLI (end-to-end)", () => {
       writeFileSync(join(project.dir, ".env"), `TEST_DB_PATH=${project.dbPath}`)
       project.writeConfig(`
         export default {
-          connection: { type: "sqlite" as const, path: process.env.TEST_DB_PATH! },
+          connection: "sqlite://" + process.env.TEST_DB_PATH!,
           options: { dbName: "default", dbType: "sqlite" as const, evolutionsRoot: "${join(project.dir, "evolutions").replace(/\\/g, "\\\\")}" }
         }
       `)
@@ -320,7 +320,7 @@ describe("db-evolutions CLI (end-to-end)", () => {
       writeFileSync(join(project.dir, ".env.local"), `TEST_DB_PATH=${altDbPath}`)
       project.writeConfig(`
         export default {
-          connection: { type: "sqlite" as const, path: process.env.TEST_DB_PATH! },
+          connection: "sqlite://" + process.env.TEST_DB_PATH!,
           options: { dbName: "default", dbType: "sqlite" as const, evolutionsRoot: "${join(project.dir, "evolutions").replace(/\\/g, "\\\\")}" }
         }
       `)
@@ -335,15 +335,16 @@ describe("db-evolutions CLI (end-to-end)", () => {
     it("config with connectionString shows masked URL, not undefined fields", () => {
       project.writeConfig(`
         export default {
-          connection: { type: "postgresql" as const, host: "localhost", port: 5432, database: "testdb", connectionString: "postgresql://myuser:secret@localhost:5432/testdb" },
+          connection: "postgresql://myuser:secret@localhost:5432/testdb",
           options: { dbName: "default", dbType: "postgresql" as const, evolutionsRoot: "${join(project.dir, "evolutions").replace(/\\/g, "\\\\")}" }
         }
       `)
 
       const result = project.run(["apply"])
 
-      expect(result.stderr).toContain("Connecting to postgresql://***@localhost:5432/testdb")
-      expect(result.stderr).not.toContain("secret")
+      const combined = result.stdout + result.stderr
+      expect(combined).toContain("postgresql://myuser:***@localhost:5432/testdb")
+      expect(combined).not.toContain("secret")
     })
   })
 })

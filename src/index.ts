@@ -26,14 +26,12 @@ export type {
   EvolutionState,
   MigratorOptions,
   MigratorOptionsInput,
-  PostgresqlConnectionConfig,
   ResolveFailureResult,
   ResolveResult,
   ResolveSuccessResult,
   RollbackFailureResult,
   RollbackResult,
   RollbackSuccessResult,
-  SqliteConnectionConfig,
   StatusFailureResult,
   StatusResult,
   StatusStuckResult,
@@ -46,6 +44,7 @@ export {
   dbType,
   dbTypes,
   defineConfig,
+  describeConnectionUrl,
   divergedEvolution,
   evolutionRecordValidator,
   evolutionState,
@@ -56,6 +55,7 @@ export {
   InitializationError,
   migratorOptionsValidator,
   NotFoundError,
+  parseConnectionUrl,
   resolveResult
 } from "./types.ts"
 

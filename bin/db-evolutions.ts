@@ -19,19 +19,13 @@ import {
   MigratorServiceLive,
   SqlRunner
 } from "../src/index.ts"
-import { connectionConfigValidator, type ConnectionConfig, migratorOptionsValidator } from "../src/types.ts"
+import { connectionConfigValidator, describeConnectionUrl, migratorOptionsValidator } from "../src/types.ts"
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 interface EvolutionsConfig {
-  connection: ConnectionConfig
+  connection: string
   options: MigratorOptionsInput
-}
-
-const describeConnection = (conn: ConnectionConfig): string => {
-  if (conn.type === "sqlite") return `sqlite://${conn.path}`
-  if (conn.connectionString) return conn.connectionString.replace(/:\/\/[^@]*@/, "://***@")
-  return `postgresql://${conn.user ?? ""}@${conn.host}:${conn.port}/${conn.database}`
 }
 
 export interface CommandLineArguments {
@@ -182,25 +176,26 @@ const main = async (): Promise<void> => {
   const config = await Effect.runPromise(loadConfig())
   config.options = { ...config.options, quiet }
 
-  let connection: ConnectionConfig
+  let connectionUrl: string
   try {
-    connection = connectionConfigValidator.parse(config.connection)
+    connectionUrl = connectionConfigValidator.parse(config.connection)
   } catch (err) {
-    console.error("Invalid connection config in evolutions.config.")
-    console.error(`Received: ${JSON.stringify(config.connection, null, 2)}`)
+    console.error("Invalid connection URL in evolutions.config.")
+    console.error(`Received: ${JSON.stringify(config.connection)}`)
     console.error(err instanceof Error ? err.message : String(err))
     process.exit(1)
   }
 
-  console.error(`Connecting to ${describeConnection(connection)}`)
+  const safeUrl = describeConnectionUrl(connectionUrl)
+  console.error(`Connecting to ${safeUrl}`)
 
-  const driver = await createDriverFromConfig(connection)
+  const driver = await createDriverFromConfig(connectionUrl)
   const sqlRunner = fromMigrationDriver(driver)
 
   try {
     await Effect.runPromise(sqlRunner.query("SELECT 1"))
   } catch (err) {
-    console.error(`Failed to connect to ${describeConnection(connection)}`)
+    console.error(`Failed to connect to ${safeUrl}`)
     console.error(err instanceof Error ? err.message : String(err))
     await driver.close()
     process.exit(1)
